@@ -1,0 +1,25 @@
+{
+  "name": "toshkent-gta",
+  "productName": "Grand Theft Avto Toshkent",
+  "version": "1.0.0",
+  "description": "Open-world driving and action game set in real Tashkent, built from OpenStreetMap data.",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "serve": "node tools/serve.mjs",
+    "extract": "node tools/extract-osm.mjs",
+    "build-map": "node tools/build-map.mjs",
+    "icon": "node tools/make-icon.mjs",
+    "package": "node tools/package.mjs",
+    "smoke-test": "electron . --smoke-test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.186.1"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.9.0"
+  }
+}

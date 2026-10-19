@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Grand Theft Avto: Toshkent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="hud" class="hidden">
+    <div id="hud-help" class="hidden"></div>
+    <div id="hud-top-right">
+      <div id="hud-clock">10:00</div>
+      <div id="hud-weapon"><span id="hud-weapon-name">Fist</span><span id="hud-ammo"></span></div>
+      <div id="hud-money">0 so'm</div>
+      <div id="hud-stars"></div>
+      <div id="hud-timer" class="hidden"></div>
+      <div id="hud-meter" class="hidden"><div class="label"></div><div class="bar"><div></div></div></div>
+    </div>
+    <div id="hud-notify"></div>
+    <div id="hud-minimap-wrap">
+      <canvas id="minimap" width="420" height="420"></canvas>
+      <div id="hud-bars"><div id="hud-health"><div></div></div><div id="hud-armor"><div></div></div></div>
+    </div>
+    <div id="hud-location"><div id="hud-street"></div><div id="hud-area"></div></div>
+    <div id="hud-vehicle" class="hidden"><div id="hud-vehicle-name"></div><div id="hud-speed"><span>0</span> km/h</div></div>
+    <div id="hud-radio" class="hidden"></div>
+    <div id="hud-bottom">
+      <div id="hud-objective" class="hidden"></div>
+      <div id="hud-subtitle" class="hidden"></div>
+    </div>
+    <div id="hud-big" class="hidden"><div class="big-title"></div><div class="big-sub"></div></div>
+    <div id="crosshair" class="hidden"></div>
+    <div id="hud-fps" class="hidden"></div>
+    <div id="hud-hint" class="hidden"></div>
+  </div>
+
+  <div id="bigmap" class="hidden">
+    <canvas id="bigmap-canvas"></canvas>
+    <div id="bigmap-legend">
+      <h2>TOSHKENT</h2>
+      <div><i class="lg you"></i>You</div>
+      <div><i class="lg mission"></i>Mission</div>
+      <div><i class="lg target"></i>Objective</div>
+      <div><i class="lg wash"></i>Moyka (respray)</div>
+      <div><i class="lg hospital"></i>Hospital</div>
+      <div><i class="lg police"></i>Police</div>
+      <div><i class="lg metro"></i>Metro</div>
+      <div><i class="lg home"></i>Safehouse</div>
+      <p>Drag to pan &middot; Wheel to zoom<br>Click to set a GPS waypoint<br>Right-click to clear &middot; M / Esc to close</p>
+    </div>
+  </div>
+
+  <div id="metro-panel" class="panel hidden">
+    <h2>Toshkent Metropoliteni</h2>
+    <p class="muted">Fare 2 000 so'm. Choose a station:</p>
+    <div id="metro-list"></div>
+    <button data-action="metro-close">Cancel</button>
+  </div>
+
+  <div id="loading" class="screen">
+    <div class="logo"><span class="l1">GRAND THEFT</span><span class="l2">AVTO</span><span class="l3">TOSHKENT</span></div>
+    <div id="load-bar"><div></div></div>
+    <div id="load-status">Loading map…</div>
+    <div class="attrib">Real streets and buildings of Tashkent from OpenStreetMap &middot; Map data &copy; OpenStreetMap contributors (ODbL)</div>
+  </div>
+
+  <div id="title" class="screen hidden">
+    <div class="logo"><span class="l1">GRAND THEFT</span><span class="l2">AVTO</span><span class="l3">TOSHKENT</span></div>
+    <div class="menu">
+      <button data-action="continue" id="btn-continue" class="hidden">Continue</button>
+      <button data-action="new">New Game</button>
+      <button data-action="controls">Controls</button>
+      <button data-action="settings">Settings</button>
+      <button data-action="quit">Quit</button>
+    </div>
+    <div class="attrib">A fan-made game. Map data &copy; OpenStreetMap contributors (ODbL).</div>
+  </div>
+
+  <div id="pause" class="screen dim hidden">
+    <h1>PAUSED</h1>
+    <div class="menu">
+      <button data-action="resume">Resume</button>
+      <button data-action="map">Map</button>
+      <button data-action="stats">Stats</button>
+      <button data-action="controls">Controls</button>
+      <button data-action="settings">Settings</button>
+      <button data-action="save">Save Game</button>
+      <button data-action="title">Quit to Title</button>
+      <button data-action="quit">Quit to Desktop</button>
+    </div>
+  </div>
+
+  <div id="controls-panel" class="panel hidden">
+    <h2>Controls</h2>
+    <div class="cols">
+      <div>
+        <h3>On foot</h3>
+        <table>
+          <tr><td>W A S D</td><td>Move</td></tr>
+          <tr><td>Mouse</td><td>Look</td></tr>
+          <tr><td>Shift</td><td>Sprint</td></tr>
+          <tr><td>Space</td><td>Jump</td></tr>
+          <tr><td>F / Enter</td><td>Enter / steal a car</td></tr>
+          <tr><td>Left mouse</td><td>Punch / shoot</td></tr>
+          <tr><td>Right mouse</td><td>Aim</td></tr>
+          <tr><td>1-5 / Wheel</td><td>Switch weapon</td></tr>
+          <tr><td>R</td><td>Reload</td></tr>
+          <tr><td>E</td><td>Use (metro, safehouse)</td></tr>
+          <tr><td>C</td><td>First / third person</td></tr>
+        </table>
+      </div>
+      <div>
+        <h3>Driving</h3>
+        <table>
+          <tr><td>W / S</td><td>Accelerate / brake &amp; reverse</td></tr>
+          <tr><td>A / D</td><td>Steer</td></tr>
+          <tr><td>Space</td><td>Handbrake (drift)</td></tr>
+          <tr><td>F / Enter</td><td>Exit vehicle</td></tr>
+          <tr><td>H</td><td>Horn / siren</td></tr>
+          <tr><td>Q</td><td>Next radio station</td></tr>
+          <tr><td>C</td><td>Camera distance / first person</td></tr>
+          <tr><td>T</td><td>Taxi / Damas job</td></tr>
+          <tr><td>Left mouse</td><td>Drive-by (aim with mouse)</td></tr>
+        </table>
+        <h3>General</h3>
+        <table>
+          <tr><td>M</td><td>Map &amp; GPS waypoint</td></tr>
+          <tr><td>Esc / P</td><td>Pause</td></tr>
+          <tr><td>F11</td><td>Fullscreen</td></tr>
+        </table>
+      </div>
+    </div>
+    <p class="muted">Gamepad (Xbox layout) is supported: sticks, RT/LT drive, Y enter/exit, RB shoot.</p>
+    <button data-action="panel-close">Back</button>
+  </div>
+
+  <div id="settings-panel" class="panel hidden">
+    <h2>Settings</h2>
+    <div class="settings-grid">
+      <label>Graphics quality<br><small class="muted">trees &amp; lights apply after restart</small></label>
+      <select id="set-quality"><option value="low">Low (fast)</option><option value="medium">Medium</option><option value="high">High</option></select>
+      <label>Auto resolution (keeps FPS smooth)</label>
+      <input type="checkbox" id="set-autores">
+      <label>Draw distance</label>
+      <input type="range" id="set-draw" min="300" max="1400" step="50">
+      <label>Traffic density</label>
+      <input type="range" id="set-traffic" min="0" max="2" step="0.1">
+      <label>Pedestrian density</label>
+      <input type="range" id="set-peds" min="0" max="2" step="0.1">
+      <label>Mouse sensitivity</label>
+      <input type="range" id="set-sens" min="0.2" max="3" step="0.05">
+      <label>Invert mouse Y</label>
+      <input type="checkbox" id="set-invert">
+      <label>Master volume</label>
+      <input type="range" id="set-volume" min="0" max="1" step="0.05">
+      <label>Radio volume</label>
+      <input type="range" id="set-music" min="0" max="1" step="0.05">
+      <label>Day length (minutes)</label>
+      <input type="range" id="set-daylen" min="6" max="96" step="2">
+      <label>Show FPS</label>
+      <input type="checkbox" id="set-fps">
+    </div>
+    <button data-action="panel-close">Back</button>
+  </div>
+
+  <div id="stats-panel" class="panel hidden">
+    <h2>Stats</h2>
+    <div id="stats-body"></div>
+    <button data-action="panel-close">Back</button>
+  </div>
+
+  <div id="click-to-play" class="hidden">Click to capture the mouse &middot; Esc to pause</div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
