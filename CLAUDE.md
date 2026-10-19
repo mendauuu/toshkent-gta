@@ -22,7 +22,7 @@ node tools/extract-osm.mjs path/to/uzbekistan-latest.osm.pbf osm-raw.json [minLa
 node tools/build-map.mjs osm-raw.json data/tashkent.json
 ```
 
-**Scenario testing / screenshots:** `electron tools/harness.cjs <scenario.cjs> <outDir>` loads the game in an offscreen window and runs a CommonJS scenario `module.exports = async ({ run, wait, shot, log, win }) => {}`. `run(code)` evaluates async JS in the page (the game is `window.game`), `shot(name)` writes `<outDir>/<name>.png`, and the page console is saved to `<outDir>/console.log`. Set `GAME_QUERY` (e.g. `?autostart=new&quality=low`) to pass URL params. Useful page hooks:
+**Scenario testing / screenshots:** `electron tools/harness.cjs <scenario.cjs> <outDir>` loads the game in an offscreen window and runs a CommonJS scenario `module.exports = async ({ run, wait, shot, log, win }) => {}`. `run(code)` evaluates async JS in the page (the game is `window.game`), `shot(name)` writes `<outDir>/<name>.png`, and the page console is saved to `<outDir>/console.log`. Set `GAME_QUERY` (e.g. `?autostart=new&quality=low`) to pass URL params, `HARNESS_SIZE` (e.g. `1920x1080`) for the window size, and `GAME_ROOT` to serve another checkout, such as `git archive main` extracted to a temp folder for before/after shots. `tools/scenarios/compare.cjs` builds a seeded world, takes day/night shots from fixed cameras and writes a render-cost benchmark to `<outDir>/bench.json`. Useful page hooks:
 - `?autostart` / `?autostart=continue` skips the title screen; `?quality=low|medium|high` overrides settings.
 - `game.tick(seconds, render)` advances the fixed-step simulation deterministically.
 - `game.debugCam = { x, y, z, tx, ty, tz }` pins the camera; `game.teleportPlayer(x, z)`.
@@ -51,7 +51,9 @@ node tools/build-map.mjs osm-raw.json data/tashkent.json
 
 **Missions (`src/missions/`):** The story is a data array `STORY` in `story.js`. Each mission is an **async script** that awaits helpers on `MissionRun` (`waitFor(pred)`, `wait(sec)`, `say`, `marker`, `spawnVehicle`, `onFrame`, …). Failing throws `MissionFailed`. `MissionRun.tick` resolves waits each step and `dispose()` cleans up spawned entities. Mission locations are computed at load time by `computeSpots(game)` from real map features. Taxi/marshrutka side jobs live in `missions.js`.
 
-**Quality tiers** (`settings.quality`: low/medium/high) change pixel ratio, shadows, tree density, ped/traffic counts and whether real spot lights exist. Lights are created up front on High only, because adding lights later forces shader recompiles. Lower tiers fake headlights with an additive glow. `adaptResolution` scales the pixel ratio dynamically.
+**Pixel-art output** (`src/fx/pixel.js`): the `pixel-style` branch renders the scene at a low internal resolution (`settings.pixelRes` = internal height 180/270/360, URL `?pixel=`). `fitPixelCanvas` picks the integer scale nearest that height for the window, sizes the drawing buffer to `ceil(window / scale)` and lays the canvas over the window at exactly that scale, with CSS `image-rendering: pixelated` doing the nearest-neighbour upscale. `game.pixel` holds `{ width, height, scale }`. The camera aspect and particle point sizes use the internal size. There is no MSAA. The DOM HUD stays at full resolution. `main` keeps the original realistic style, and `Archive_Realistic/` has reference copies of its rendering files.
+
+**Quality tiers** (`settings.quality`: low/medium/high) change shadows, tree density, ped/traffic counts and whether real spot lights exist. They no longer change resolution. Lights are created up front on High only, because adding lights later forces shader recompiles. Lower tiers fake headlights with an additive glow.
 
 **Persistence:** `src/settings.js` stores settings and the save game in `localStorage` (`gta-toshkent-settings-v1`, `gta-toshkent-save-v1`). The game autosaves every 60 s.
 

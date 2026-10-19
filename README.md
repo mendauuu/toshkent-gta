@@ -82,10 +82,11 @@ An Xbox-style gamepad also works (sticks, RT/LT to drive, Y to enter/exit, RB to
 
 ## Performance
 
-The default *Medium* quality runs on integrated Intel graphics. **Auto resolution** (on by default)
-lowers the render resolution when the frame rate drops and raises it again when there is headroom.
-In Settings you can switch to *Low* (no shadows, fewer trees) or *High* (real headlights and spotlights,
-tree shadows, sharper image), and change draw distance, traffic and pedestrian density.
+The default *Medium* quality runs on integrated Intel graphics. The city is drawn at a low
+**Pixel resolution** (Settings: Low 320×180, Medium 480×270, High 640×360) and scaled up to the window
+by a whole number, so the pixels stay square and crisp and the GPU has far fewer pixels to shade.
+In Settings you can also switch quality to *Low* (no shadows, fewer trees) or *High* (real headlights and
+spotlights, tree shadows), and change draw distance, traffic and pedestrian density.
 
 ## How the city was made
 

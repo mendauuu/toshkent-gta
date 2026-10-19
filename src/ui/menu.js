@@ -59,7 +59,7 @@ export class Menu {
       });
     };
     bind('set-quality', 'quality', String, () => this.game.applyQuality());
-    bind('set-autores', 'autoRes', Boolean, () => { if (!s.autoRes) { this.game.dynScale = 1; this.game.applyQuality(); } });
+    bind('set-pixel', 'pixelRes', Number, () => this.game.onResize());
     bind('set-draw', 'drawDistance');
     bind('set-traffic', 'traffic');
     bind('set-peds', 'peds');
@@ -72,7 +72,7 @@ export class Menu {
   }
   syncSettings() {
     const s = this.game.settings;
-    $('set-quality').value = s.quality; $('set-draw').value = s.drawDistance; $('set-autores').checked = s.autoRes; $('set-traffic').value = s.traffic; $('set-peds').value = s.peds;
+    $('set-quality').value = s.quality; $('set-pixel').value = s.pixelRes; $('set-draw').value = s.drawDistance; $('set-traffic').value = s.traffic; $('set-peds').value = s.peds;
     $('set-sens').value = s.mouseSens; $('set-invert').checked = s.invertY; $('set-volume').value = s.volume; $('set-music').value = s.music;
     $('set-daylen').value = s.dayLength; $('set-fps').checked = s.showFps;
   }

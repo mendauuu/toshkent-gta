@@ -9,7 +9,8 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: var(--hud-font); user-select: none; }
-#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; transition: filter 1.2s; }
+/* the 3D view is drawn at a low resolution and scaled up with hard pixel edges (size set in fx/pixel.js) */
+#view { position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; transition: filter 1.2s; }
 #view.freelook { cursor: none; }
 #view.wasted { filter: grayscale(1) contrast(1.1) brightness(0.85); }
 #view.busted { filter: saturate(0.4) brightness(0.8) hue-rotate(180deg); }

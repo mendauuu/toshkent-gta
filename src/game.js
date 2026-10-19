@@ -15,6 +15,7 @@ import { PoliceManager, Cop } from './entities/police.js';
 import { Combat, WEAPONS } from './entities/weapons.js';
 import { Pickups } from './entities/pickups.js';
 import { Effects } from './fx/effects.js';
+import { fitPixelCanvas } from './fx/pixel.js';
 import { Audio } from './audio/audio.js';
 import { Hud } from './ui/hud.js';
 import { MapRenderer } from './ui/minimap.js';
@@ -39,15 +40,15 @@ export class Game {
     this.missionNPCs = [];
     this.save = NEW_SAVE();
     this.gps = null;
-    const q = this.settings.quality;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: q !== 'low', powerPreference: 'high-performance', stencil: false });
-    this.renderer.setPixelRatio(this.pixelRatio());
-    this.renderer.setSize(innerWidth, innerHeight, false);
+    // pixel-art look: no anti-aliasing, and the scene renders at a low internal resolution that
+    // onResize() fits to the window (see fx/pixel.js)
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.3, 9000);
+    this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.3, 9000);
+    this.onResize();
     this.collision = new CollisionWorld(map.scenery, map.bounds);
     this.graph = new RoadGraph(map.graph, map.names);
     this.env = new Environment(this.scene, this.renderer, this.settings);
@@ -56,32 +57,6 @@ export class Game {
     this.projScreen = new THREE.Matrix4();
     this.tmpSphere = new THREE.Sphere();
     addEventListener('resize', () => this.onResize());
-  }
-
-  maxPixelRatio() {
-    const q = this.settings.quality;
-    return q === 'low' ? 0.75 : q === 'medium' ? Math.min(1, devicePixelRatio) : Math.min(1.5, devicePixelRatio);
-  }
-  pixelRatio() {
-    if (this.dynScale === undefined) this.dynScale = 1;
-    return Math.max(0.5, this.maxPixelRatio() * this.dynScale);
-  }
-
-  // lower the render resolution when the GPU can't keep up, raise it again when it can
-  adaptResolution(dt) {
-    if (!this.settings.autoRes || this.state !== 'playing') return;
-    this.fpsAvg = this.fpsAvg ? this.fpsAvg + (1 / Math.max(dt, 1e-3) - this.fpsAvg) * 0.04 : 60;
-    this.resT = (this.resT || 0) + dt;
-    if (this.resT < 2.5) return;
-    this.resT = 0;
-    let s = this.dynScale ?? 1;
-    if (this.fpsAvg < 38 && s > 0.7) s = Math.max(0.7, s - 0.1);
-    else if (this.fpsAvg > 55 && s < 1) s = Math.min(1, s + 0.05);
-    if (s !== this.dynScale) {
-      this.dynScale = s;
-      this.renderer.setPixelRatio(this.pixelRatio());
-      this.onResize();
-    }
   }
 
   async load(progress) {
@@ -518,18 +493,17 @@ export class Game {
   }
 
   applyQuality() {
-    this.renderer.setPixelRatio(this.pixelRatio());
-    this.onResize();
     const before = this.renderer.shadowMap.enabled;
     this.env.applyShadowSettings();
     if (before !== this.renderer.shadowMap.enabled) this.scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); });
   }
 
+  // internal pixel resolution from Settings, scaled up to the window by a whole number
   onResize() {
-    this.renderer.setSize(innerWidth, innerHeight, false);
-    this.camera.aspect = innerWidth / innerHeight;
+    this.pixel = fitPixelCanvas(this.renderer, this.canvas, this.settings.pixelRes);
+    this.camera.aspect = this.pixel.width / this.pixel.height;
     this.camera.updateProjectionMatrix();
-    this.fx?.setScale(this.renderer.domElement.height, this.camera.fov);
+    this.fx?.setScale(this.pixel.height, this.camera.fov);
   }
 
   // ------------------------------------------------------------------ cheats (type them while playing)
@@ -591,7 +565,6 @@ export class Game {
     const t1 = performance.now();
     this.frame(simulate ? dt : 0, dt);
     const t2 = performance.now();
-    this.adaptResolution(dt);
     this.perf = this.perf || { sim: 0, frame: 0 };
     this.perf.sim += (t1 - t0 - this.perf.sim) * 0.05;
     this.perf.frame += (t2 - t1 - this.perf.frame) * 0.05;

@@ -151,7 +151,8 @@ export class Hud {
       if (this.fpsAcc > 0.5) {
         const r = g.renderer.info.render;
         const pf = g.perf || { sim: 0, frame: 0 };
-        this.set('fps', this.el.fps, `${Math.round(this.fpsN / this.fpsAcc)} fps · cpu ${pf.sim.toFixed(1)}+${pf.frame.toFixed(1)} ms · ${r.calls} draws · ${(r.triangles / 1000).toFixed(0)}k tris`);
+        const px = g.pixel;
+        this.set('fps', this.el.fps, `${Math.round(this.fpsN / this.fpsAcc)} fps · cpu ${pf.sim.toFixed(1)}+${pf.frame.toFixed(1)} ms · ${r.calls} draws · ${(r.triangles / 1000).toFixed(0)}k tris · ${px.width}×${px.height} ×${px.scale}`);
         this.fpsAcc = 0; this.fpsN = 0;
       }
       this.el.fps.classList.remove('hidden');

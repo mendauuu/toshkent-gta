@@ -2,17 +2,21 @@
 const KEY = 'gta-toshkent-settings-v1';
 const SAVE_KEY = 'gta-toshkent-save-v1';
 
+// pixelRes: internal render height in pixels (180 / 270 / 360), see fx/pixel.js
 export const DEFAULTS = {
-  quality: 'medium', drawDistance: 650, traffic: 1, peds: 1, mouseSens: 1, invertY: false,
-  volume: 0.8, music: 0.6, dayLength: 24, showFps: false, autoRes: true,
+  quality: 'medium', pixelRes: 270, drawDistance: 650, traffic: 1, peds: 1, mouseSens: 1, invertY: false,
+  volume: 0.8, music: 0.6, dayLength: 24, showFps: false,
 };
 
 export function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { s = {}; }
   const out = { ...DEFAULTS, ...s };
+  delete out.autoRes; // replaced by the fixed pixel resolution
   const url = new URLSearchParams(location.search);
   if (url.get('quality')) out.quality = url.get('quality');
+  if (url.get('pixel')) out.pixelRes = Number(url.get('pixel'));
+  if (!(out.pixelRes >= 90 && out.pixelRes <= 2160)) out.pixelRes = DEFAULTS.pixelRes;
   return out;
 }
 export function saveSettings(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* storage unavailable */ } }
