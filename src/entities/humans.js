@@ -1,7 +1,14 @@
-// People: one instanced mesh for everyone, limbs animated in the vertex shader.
+// People: one instanced mesh for everyone, limbs animated in the vertex shader, toon-shaded in the
+// cute pixel palette.
 import * as THREE from 'three';
 import { choice, chance, rand } from '../util/math.js';
 import { radialTexture, ORDER } from '../world/city.js';
+import { toon } from '../world/materials.js';
+import { PAL, cute } from '../world/palette.js';
+
+// clothing colours set elsewhere (the player, mission characters) snap to the palette too
+const cuteCache = new Map();
+const cuteCloth = (hex) => { let c = cuteCache.get(hex); if (c === undefined) { c = cute(hex); cuteCache.set(hex, c); } return c; };
 
 // parts: 0 body, 1 left arm, 2 right arm, 3 left leg, 4 right leg
 // slots: 0 shirt, 1 pants, 2 skin, 3 hair, 4 shoes, 5 extra (hat/scarf/dress), 6 black, 7 white, 8 gun
@@ -95,16 +102,15 @@ const HUMAN_COLOR = /* glsl */ `
   {
     float s = aSlot;
     vec3 c = iColA;
-    if (s > 0.5 && s < 1.5) c = iColB; else if (s > 1.5 && s < 2.5) c = iColC; else if (s > 2.5 && s < 3.5) c = iColD * 0.35 + vec3(0.03);
-    else if (s > 3.5 && s < 4.5) c = vec3(0.06); else if (s > 4.5 && s < 5.5) c = iColD; else if (s > 5.5 && s < 6.5) c = vec3(0.025);
-    else if (s > 6.5 && s < 7.5) c = vec3(0.85); else if (s > 7.5) c = vec3(0.09);
-    if (s > 2.5 && s < 3.5) c = mix(vec3(0.03, 0.025, 0.02), vec3(0.2, 0.17, 0.15), iColD.r * 0.4);
+    if (s > 0.5 && s < 1.5) c = iColB; else if (s > 1.5 && s < 2.5) c = iColC; else if (s > 2.5 && s < 3.5) c = mix(vec3(0.04, 0.018, 0.04), vec3(0.2, 0.08, 0.05), iColD.r * 0.5);
+    else if (s > 3.5 && s < 4.5) c = vec3(0.06, 0.03, 0.09); else if (s > 4.5 && s < 5.5) c = iColD; else if (s > 5.5 && s < 6.5) c = vec3(0.024, 0.012, 0.042);
+    else if (s > 6.5 && s < 7.5) c = vec3(1.0); else if (s > 7.5) c = vec3(0.06, 0.03, 0.09);
     vHumanColor = c;
   }
 `;
 
 function makeHumanMaterial() {
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const mat = toon({ color: 0xffffff });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\n' + HUMAN_VERT_PARS)
@@ -118,21 +124,22 @@ function makeHumanMaterial() {
   return mat;
 }
 
-const SKINS = [0xe0b48f, 0xd2a07a, 0xc08a63, 0xb47b55, 0xe8c4a2, 0x9c6a48];
-const SHIRTS = [0xffffff, 0xf0f0f0, 0x2b3a55, 0x1d1d1f, 0x6b7f99, 0x8a3b3b, 0x3f6b4a, 0xd8cbb0, 0x4a5d7a, 0x9b9fa6, 0xc96f3d, 0x2f5f8f, 0x7a2f5f];
-const PANTS = [0x1f2228, 0x2c3445, 0x3b3b3f, 0x4b4436, 0x23262c, 0x5a5f6b, 0x2b3a55];
-const DRESSES = [0x7a1f3a, 0x1f4f8a, 0x2f7a5a, 0xb03a5a, 0x5a2f7a, 0xc89a2a, 0x2a2a35, 0x8a5a2f];
-const SCARVES = [0xe8e2d0, 0x3a6aa8, 0xc8486a, 0x2f2f35, 0x7a9a3a, 0xd8a03a];
-const HAIRS = [0x1a1512, 0x2b201a, 0x3a2a20, 0x6b6b6b, 0x111111];
+// cute palette versions; each list keeps its old length so looks are drawn with the same random calls
+const SKINS = [0xffd2a8, 0xf2b98c, 0xdb9a6b, 0xc9845a, 0xffe0c2, 0xb06f48];
+const SHIRTS = [PAL.white, PAL.cloud, PAL.blue, PAL.plum, PAL.sky, PAL.coral, PAL.leaf, PAL.cream, PAL.navy, PAL.lilac, PAL.orange, PAL.teal, PAL.berry];
+const PANTS = [PAL.plum, PAL.navy, PAL.slate, PAL.brownDk, PAL.ink, PAL.slateLt, PAL.blue];
+const DRESSES = [PAL.berry, PAL.blue, PAL.teal, PAL.pink, PAL.purple, PAL.gold, PAL.plum, PAL.orange];
+const SCARVES = [PAL.cloud, PAL.sky, PAL.pink, PAL.plum, PAL.lime, PAL.yellow];
+const HAIRS = [0x3a2430, PAL.brownDk, 0x5a3424, PAL.lilac, PAL.ink];
 
 export function randomLook(kind = 'ped') {
   const look = { shirt: choice(SHIRTS), pants: choice(PANTS), skin: choice(SKINS), extra: choice(HAIRS), bits: VAR.HAIR };
   if (kind === 'police') {
-    look.shirt = 0x3a4a3e; look.pants = 0x2a332c; look.extra = 0x2f3a33; look.bits = VAR.CAP | VAR.GUN;
+    look.shirt = PAL.navy; look.pants = PAL.plum; look.extra = PAL.navy; look.bits = VAR.CAP | VAR.GUN;
     return look;
   }
   if (kind === 'gang') {
-    look.shirt = 0x1a1a1a; look.pants = 0x22252b; look.extra = 0x111111; look.bits = VAR.HAIR | VAR.GUN | VAR.COAT | (chance(0.4) ? VAR.BEARD : 0);
+    look.shirt = PAL.ink; look.pants = PAL.plum; look.extra = PAL.ink; look.bits = VAR.HAIR | VAR.GUN | VAR.COAT | (chance(0.4) ? VAR.BEARD : 0);
     return look;
   }
   if (chance(0.45)) {
@@ -202,7 +209,7 @@ export class HumanRenderer {
     // blob shadows
     const sg = new THREE.PlaneGeometry(1, 1);
     sg.rotateX(-Math.PI / 2);
-    this.shadow = new THREE.InstancedMesh(sg, new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.38, depthWrite: false, map: radialTexture() }), MAX_HUMANS);
+    this.shadow = new THREE.InstancedMesh(sg, new THREE.MeshBasicMaterial({ color: PAL.ink, transparent: true, opacity: 0.4, depthWrite: false, map: radialTexture() }), MAX_HUMANS);
     this.shadow.renderOrder = ORDER.shadow;
     this.shadow.count = 0;
     this.shadow.frustumCulled = false;
@@ -221,10 +228,10 @@ export class HumanRenderer {
     const i = this.n++;
     const L = h.look;
     const put = (attr, hex) => { this.c.set(hex); attr.array[i * 3] = this.c.r; attr.array[i * 3 + 1] = this.c.g; attr.array[i * 3 + 2] = this.c.b; };
-    put(this.attrs.iColA, L.shirt);
-    put(this.attrs.iColB, L.pants);
+    put(this.attrs.iColA, cuteCloth(L.shirt));
+    put(this.attrs.iColB, cuteCloth(L.pants));
     put(this.attrs.iColC, L.skin);
-    put(this.attrs.iColD, L.extra);
+    put(this.attrs.iColD, cuteCloth(L.extra));
     const an = this.attrs.iAnim.array;
     let bits = L.bits;
     if (h.showGun === false) bits &= ~VAR.GUN;

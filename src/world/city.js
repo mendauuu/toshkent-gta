@@ -3,16 +3,19 @@
 import * as THREE from 'three';
 import { FloatBuf, IndexBuf, ringArea, ringCentroid, mulberry32 } from '../util/math.js';
 import {
-  makeGroundMaterial, makeMarkingMaterial, makeWaterMaterial, makeBuildingMaterial, makeFoliageMaterial, sharedUniforms,
+  makeGroundMaterial, makeMarkingMaterial, makeWaterMaterial, makeBuildingMaterial, makeFoliageMaterial, sharedUniforms, toon, hideBeyond,
 } from './materials.js';
+import { PAL, wallColor, roofColor } from './palette.js';
 
 export const CHUNK = 300;
 const STYLE_PARAMS = [null, { bay: 3.6, floor: 3.0 }, { bay: 3.0, floor: 2.9 }, { bay: 1.6, floor: 3.6 }, { bay: 3.2, floor: 3.6 }, { bay: 6.0, floor: 6.5 }];
 export const ORDER = { ground: -30, green: -29, plaza: -28, water: -27, rail: -26, sidewalk: -25, path: -24, road: -23, marking: -22, decal: -21, shadow: -20 };
-const ROAD_COLORS = [0x575451, 0x5d5a56, 0x64605c, 0xa39a8c, 0xb4aa97];
-const GREEN_COLORS = [0x6d8c4b, 0x557848, 0x7a9a55, 0x7b8a6a, 0xc9b58c];
-const PLAZA_COLORS = [0xb3aa9b, 0x56585b];
+// palette colours (see palette.js): road classes 0-4, green kinds, plaza kinds
+const ROAD_COLORS = [PAL.slate, PAL.slate, 0x67658f, PAL.cream, PAL.apricotLt];
+const GREEN_COLORS = [PAL.grass, PAL.leaf, 0x9bdb55, PAL.mint, PAL.apricotLt];
+const PLAZA_COLORS = [0xf2dfc0, 0x6c6a94];
 const tmpC = new THREE.Color();
+const v3 = new THREE.Vector3();
 const col = (hex) => new THREE.Color(hex);
 // yield to the event loop so the loading screen can repaint (works even when the window is hidden)
 export const yieldFrame = () => new Promise((r) => setTimeout(r, 0));
@@ -186,18 +189,15 @@ export class City {
     this.cnz = Math.ceil((s.maxZ - s.minZ) / CHUNK);
     this.chunks = new Array(this.cnx * this.cnz);
     this.chunkList = [];
+    const ground = makeGroundMaterial();
     this.materials = {
-      ground: makeGroundMaterial({ noiseScale: 0.18, noiseAmp: 0.16 }),
-      green: makeGroundMaterial({ noiseScale: 0.4, noiseAmp: 0.22 }),
-      plaza: makeGroundMaterial({ noiseScale: 0.9, noiseAmp: 0.1 }),
+      ground, green: ground, plaza: ground, sidewalk: ground, road: ground,
       water: makeWaterMaterial(),
-      sidewalk: makeGroundMaterial({ noiseScale: 1.4, noiseAmp: 0.08 }),
-      road: makeGroundMaterial({ noiseScale: 0.6, noiseAmp: 0.09 }),
       marking: makeMarkingMaterial(),
       building: makeBuildingMaterial(false),
       skyline: makeBuildingMaterial(true),
       foliage: makeFoliageMaterial(true),
-      trunk: new THREE.MeshLambertMaterial({ color: 0x5a4636 }),
+      trunk: toon({ color: PAL.brown }),
     };
     this.lampHeads = null;
     this.signalHeads = [];
@@ -246,7 +246,7 @@ export class City {
     const g = new THREE.PlaneGeometry(s.maxX - s.minX + pad * 2, s.maxZ - s.minZ + pad * 2, 1, 1);
     g.rotateX(-Math.PI / 2);
     g.translate((s.minX + s.maxX) / 2, 0, (s.minZ + s.maxZ) / 2);
-    const c = col(0xb2a68c);
+    const c = col(0xb3dd6a);
     const colors = new Float32Array(g.attributes.position.count * 3);
     for (let i = 0; i < colors.length; i += 3) { colors[i] = c.r; colors[i + 1] = c.g; colors[i + 2] = c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -286,21 +286,21 @@ export class City {
         disc(B, piece[0], piece[1], w.w / 2, 0, c, 8);
       }
     }
-    const rc = col(0x6e6355), steel = col(0x8d8f93);
+    const rc = col(PAL.brownDk), steel = col(PAL.lilac);
     for (const r of this.data.rails) {
       for (const piece of splitPolyline(r.pts, 160)) {
         const m = piece.length >> 1;
         const ch = this.chunkAt(piece[(m >> 1) * 2], piece[(m >> 1) * 2 + 1]);
         ribbon(ch.layer('rail'), piece, 1.7, 0, rc);
-        ribbon(ch.layer('marking', true), piece, 0.05, 0, steel, -0.72);
-        ribbon(ch.layer('marking', true), piece, 0.05, 0, steel, 0.72);
+        ribbon(ch.layer('marking', true), piece, 0.12, 0, steel, -0.72);
+        ribbon(ch.layer('marking', true), piece, 0.12, 0, steel, 0.72);
       }
     }
   }
 
   // ------------------------------------------------------------------ roads
   buildRoads() {
-    const sideC = col(0xa8a297), curb = col(0x9a958d);
+    const sideC = col(0xf2d9c4), curb = col(PAL.cloud);
     const colors = ROAD_COLORS.map(col);
     for (const r of this.data.roads) {
       const pieces = splitPolyline(r.pts, 150);
@@ -314,7 +314,7 @@ export class City {
           ribbon(sw, piece, hw + 3.2, 0, sideC);
           disc(sw, piece[0], piece[1], hw + 3.2, 0, sideC, 10);
           disc(sw, piece[piece.length - 2], piece[piece.length - 1], hw + 3.2, 0, sideC, 10);
-          ribbon(sw, piece, hw + 0.25, 0, curb);
+          ribbon(sw, piece, hw + 0.35, 0, curb);
         }
         const layer = r.cls >= 3 ? ch.layer('path') : ch.layer('road');
         const c = colors[r.cls] || colors[2];
@@ -329,7 +329,9 @@ export class City {
 
   buildMarkings() {
     const G = this.graph;
-    const white = col(0xe8e6de), worn = col(0xcfccc2);
+    // lines are drawn 2-3x wider than real paint so they stay at least 2 pixels wide until the
+    // marking shader hides them in the distance
+    const white = col(PAL.white), worn = col(PAL.cloud);
     const trimAt = (n, ei) => {
       if (G.degree(n) < 3) return 0;
       let m = 0;
@@ -358,14 +360,14 @@ export class City {
       const c = e.major ? white : worn;
       if (e.oneway) {
         const lw = e.w / e.lf;
-        for (let k = 1; k < e.lf; k++) ribbon(B, pts, 0.07, 0, c, -e.w / 2 + lw * k, 1);
-        if (e.major && e.w > 7) { ribbon(B, pts, 0.07, 0, c, -e.w / 2 + 0.45, 0); ribbon(B, pts, 0.07, 0, c, e.w / 2 - 0.45, 0); }
+        for (let k = 1; k < e.lf; k++) ribbon(B, pts, 0.18, 0, c, -e.w / 2 + lw * k, 1);
+        if (e.major && e.w > 7) { ribbon(B, pts, 0.16, 0, c, -e.w / 2 + 0.55, 0); ribbon(B, pts, 0.16, 0, c, e.w / 2 - 0.55, 0); }
       } else {
-        if (e.major && e.w >= 9) { ribbon(B, pts, 0.06, 0, c, -0.14, 0); ribbon(B, pts, 0.06, 0, c, 0.14, 0); }
-        else ribbon(B, pts, 0.07, 0, c, 0, 1);
+        if (e.major && e.w >= 9) ribbon(B, pts, 0.22, 0, c, 0, 0);
+        else ribbon(B, pts, 0.18, 0, c, 0, 1);
         const lw = Math.min(3.7, e.w / Math.max(2, e.lf + e.lb));
-        for (let k = 1; k < e.lf; k++) ribbon(B, pts, 0.07, 0, c, lw * k, 1);
-        for (let k = 1; k < e.lb; k++) ribbon(B, pts, 0.07, 0, c, -lw * k, 1);
+        for (let k = 1; k < e.lf; k++) ribbon(B, pts, 0.18, 0, c, lw * k, 1);
+        for (let k = 1; k < e.lb; k++) ribbon(B, pts, 0.18, 0, c, -lw * k, 1);
       }
       // stop lines and zebra crossings at signalised junctions
       for (const [n, dir] of [[e.b, 1], [e.a, -1]]) {
@@ -377,7 +379,7 @@ export class City {
         const half = e.w / 2;
         const from = e.oneway ? -half : 0;
         const a0x = p.x + rx * from, a0z = p.z + rz * from, a1x = p.x + rx * half, a1z = p.z + rz * half;
-        ribbon(B, Float32Array.from([a0x, a0z, a1x, a1z]), 0.25, 0, white, 0, 0);
+        ribbon(B, Float32Array.from([a0x, a0z, a1x, a1z]), 0.3, 0, white, 0, 0);
         // zebra between stop line and junction
         const zx = p.x + p.tx * 2.4, zz = p.z + p.tz * 2.4;
         const z0x = zx - rx * half, z0z = zz - rz * half, z1x = zx + rx * half, z1z = zz + rz * half;
@@ -402,11 +404,11 @@ export class City {
   }
 
   addBuilding(B, b, seedIdx, cx, cz) {
-    const wall = col(b.color);
-    const roofC = col(b.roofColor);
     const sp = STYLE_PARAMS[b.style];
     const h = b.h, y0 = b.minH;
     const seed = (seedIdx * 0.6180339) % 1 * 50;
+    const wall = col(wallColor(b.color, seed));
+    const roofC = col(roofColor(b.roofColor, seed + 0.37, b.roof));
     const floors = sp ? Math.max(1, Math.floor((h - 0.4) / sp.floor)) : 0;
     const rings = [b.ring, ...b.holes];
     for (const r of rings) {
@@ -420,9 +422,8 @@ export class City {
         const nWin = sp ? Math.round(len / sp.bay) : 0;
         const fl = sp ? sp.floor : 1;
         const st = sp ? b.style : 0;
-        const ao = y0 < 0.1 ? 0.8 : 1;
-        const v0 = B.vert(ax, y0, az, nx, 0, nz, wall, 0, y0 / fl, floors, st, seed, ao);
-        const v1 = B.vert(bx, y0, bz, nx, 0, nz, wall, nWin, y0 / fl, floors, st, seed, ao);
+        const v0 = B.vert(ax, y0, az, nx, 0, nz, wall, 0, y0 / fl, floors, st, seed);
+        const v1 = B.vert(bx, y0, bz, nx, 0, nz, wall, nWin, y0 / fl, floors, st, seed);
         const v2 = B.vert(bx, h, bz, nx, 0, nz, wall, nWin, h / fl, floors, st, seed);
         const v3 = B.vert(ax, h, az, nx, 0, nz, wall, 0, h / fl, floors, st, seed);
         B.idx.push3(v0, v2, v1);
@@ -503,7 +504,7 @@ export class City {
         B.idx.push3(a + 1, b2, b2 + 1);
       }
       // little golden finial
-      const gold = col(0xd8b04a);
+      const gold = col(PAL.gold);
       const tip = [cx, h + rh + Math.max(0.6, rh * 0.18), cz];
       for (let k = 0; k < 4; k++) {
         const a0 = (k / 4) * Math.PI * 2, a1 = ((k + 1) / 4) * Math.PI * 2, rr = Math.max(0.12, R * 0.04);
@@ -584,16 +585,17 @@ export class City {
     }
     this.signalHeads = heads;
     if (!heads.length) return;
-    // pole + arm + housing as one geometry, lamps as a separate instanced mesh
+    // pole + arm + housing as one geometry, lamps as a separate instanced mesh; chunky enough to stay
+    // 2+ pixels wide, and hidden in the distance where they would shrink to stray pixels
     const poleGeo = mergeBoxes([
-      [0, 2.6, 0, 0.16, 5.2, 0.16, 0x3a3d40],
-      [-1.4, 5.0, 0, 2.8, 0.12, 0.12, 0x3a3d40],
-      [-2.6, 4.25, 0.05, 0.42, 1.25, 0.3, 0x1e2124],
-      [0, 2.7, 0.05, 0.36, 1.05, 0.26, 0x1e2124],
+      [0, 2.6, 0, 0.3, 5.2, 0.3, PAL.plum],
+      [-1.4, 5.0, 0, 2.8, 0.24, 0.24, PAL.plum],
+      [-2.6, 4.25, 0.05, 0.5, 1.3, 0.36, PAL.ink],
+      [0, 2.7, 0.05, 0.44, 1.1, 0.32, PAL.ink],
     ]);
-    const poles = new THREE.InstancedMesh(poleGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), heads.length);
-    const lampGeo = new THREE.SphereGeometry(0.13, 8, 6);
-    const lamps = new THREE.InstancedMesh(lampGeo, new THREE.MeshBasicMaterial({ toneMapped: false }), heads.length * 6);
+    const poles = new THREE.InstancedMesh(poleGeo, hideBeyond(toon({ vertexColors: true }), 110, 'signal'), heads.length);
+    const lampGeo = new THREE.BoxGeometry(0.32, 0.3, 0.1);
+    const lamps = new THREE.InstancedMesh(lampGeo, hideBeyond(new THREE.MeshBasicMaterial(), 110, 'signal-lamp'), heads.length * 6);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1), v = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     heads.forEach((h, i) => {
       q.setFromAxisAngle(up, h.heading);
@@ -602,7 +604,7 @@ export class City {
       // lamps on the arm housing (local x=-2.6) and on the pole housing (local x=0), facing +z
       const local = [[-2.6, 4.62], [-2.6, 4.25], [-2.6, 3.88], [0, 3.04], [0, 2.7], [0, 2.36]];
       local.forEach(([lx, ly], k) => {
-        v.set(lx, ly, 0.2).applyQuaternion(q);
+        v.set(lx, ly, 0.24).applyQuaternion(q);
         m.compose(v.add(new THREE.Vector3(h.x, 0, h.z)), q, s);
         lamps.setMatrixAt(i * 6 + k, m);
         lamps.setColorAt(i * 6 + k, tmpC.set(0x111111));
@@ -619,9 +621,9 @@ export class City {
   updateSignals(time) {
     if (!this.signalLamps) return;
     const G = this.graph;
-    const RED = [new THREE.Color(0xff2a1a), new THREE.Color(0x2a0806)];
-    const YEL = [new THREE.Color(0xffb400), new THREE.Color(0x2a1d04)];
-    const GRN = [new THREE.Color(0x2bff6a), new THREE.Color(0x05260f)];
+    const RED = [new THREE.Color(0xff4a3a), new THREE.Color(0x5a2030)];
+    const YEL = [new THREE.Color(0xffd23a), new THREE.Color(0x5a4630)];
+    const GRN = [new THREE.Color(0x4dff7a), new THREE.Color(0x20503a)];
     this.signalHeads.forEach((h, i) => {
       const st = G.signalState(h.node, h.edge, time);
       for (let k = 0; k < 2; k++) {
@@ -658,14 +660,14 @@ export class City {
     this.busStops = shelters;
     if (shelters.length) {
       const geo = mergeBoxes([
-        [0, 2.45, 0, 3.6, 0.1, 1.7, 0x2f6fb0],
-        [0, 1.3, -0.75, 3.5, 2.2, 0.05, 0x9fc3d6],
-        [1.75, 1.2, -0.7, 0.08, 2.4, 0.08, 0x666a70],
-        [-1.75, 1.2, -0.7, 0.08, 2.4, 0.08, 0x666a70],
-        [0, 0.45, -0.45, 2.6, 0.08, 0.42, 0x7a5a3a],
-        [1.2, 2.75, 0.5, 0.9, 0.35, 0.06, 0x1e9e5a],
+        [0, 2.45, 0, 3.6, 0.2, 1.7, PAL.blue],
+        [0, 1.3, -0.75, 3.5, 2.2, 0.1, PAL.skyLt],
+        [1.75, 1.2, -0.7, 0.2, 2.4, 0.2, PAL.navy],
+        [-1.75, 1.2, -0.7, 0.2, 2.4, 0.2, PAL.navy],
+        [0, 0.45, -0.45, 2.6, 0.16, 0.42, PAL.brown],
+        [1.2, 2.8, 0.5, 0.9, 0.45, 0.1, PAL.leaf],
       ]);
-      const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), shelters.length);
+      const mesh = new THREE.InstancedMesh(geo, toon({ vertexColors: true }), shelters.length);
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), s = new THREE.Vector3(1, 1, 1);
       shelters.forEach((sh, i) => { q.setFromAxisAngle(up, sh.heading); m.compose(new THREE.Vector3(sh.x, 0, sh.z), q, s); mesh.setMatrixAt(i, m); });
       mesh.castShadow = true;
@@ -681,19 +683,23 @@ export class City {
     }
     this.metroSigns = signs;
     if (signs.length) {
+      // 16x16 pixel-art "M" sign, point-sampled
+      const M = ['................', '.##############.', '.#............#.', '.#.##......##.#.', '.#.###....###.#.', '.#.####..####.#.', '.#.##.####.##.#.',
+        '.#.##..##..##.#.', '.#.##......##.#.', '.#.##......##.#.', '.#.##......##.#.', '.#.##......##.#.', '.#.##......##.#.', '.#............#.', '.##############.', '................'];
       const cnv = document.createElement('canvas');
-      cnv.width = cnv.height = 128;
+      cnv.width = cnv.height = 16;
       const g = cnv.getContext('2d');
-      g.fillStyle = '#1565c0'; g.fillRect(0, 0, 128, 128);
-      g.fillStyle = '#fff'; g.font = 'bold 96px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('M', 64, 70);
+      M.forEach((row, y) => [...row].forEach((ch, x) => { g.fillStyle = ch === '#' ? '#ffffff' : '#3a8fe0'; g.fillRect(x, y, 1, 1); }));
       const tex = new THREE.CanvasTexture(cnv);
       tex.colorSpace = THREE.SRGBColorSpace;
-      const signGeo = new THREE.BoxGeometry(0.9, 0.9, 0.14);
+      tex.magFilter = tex.minFilter = THREE.NearestFilter;
+      tex.generateMipmaps = false;
+      const signGeo = new THREE.BoxGeometry(1.1, 1.1, 0.2);
       signGeo.translate(0, 3.1, 0);
-      const postGeo = new THREE.CylinderGeometry(0.06, 0.06, 2.8, 6);
-      postGeo.translate(0, 1.4, 0);
-      const signMesh = new THREE.InstancedMesh(signGeo, new THREE.MeshLambertMaterial({ map: tex, emissive: 0x0a2a5a, emissiveIntensity: 0.4 }), signs.length);
-      const postMesh = new THREE.InstancedMesh(postGeo, new THREE.MeshLambertMaterial({ color: 0x8a8d92 }), signs.length);
+      const postGeo = new THREE.BoxGeometry(0.22, 2.7, 0.22);
+      postGeo.translate(0, 1.35, 0);
+      const signMesh = new THREE.InstancedMesh(signGeo, toon({ map: tex, emissive: 0x10306a, emissiveIntensity: 0.4 }), signs.length);
+      const postMesh = new THREE.InstancedMesh(postGeo, toon({ color: PAL.navy }), signs.length);
       const m = new THREE.Matrix4();
       signs.forEach((sg, i) => { m.makeRotationY((i * 1.3) % Math.PI); m.setPosition(sg.x, 0, sg.z); signMesh.setMatrixAt(i, m); postMesh.setMatrixAt(i, m); });
       this.scene.add(signMesh, postMesh);
@@ -709,28 +715,30 @@ export class City {
       ['rail', M.road, ORDER.rail], ['sidewalk', M.sidewalk, ORDER.sidewalk], ['path', M.sidewalk, ORDER.path],
       ['road', M.road, ORDER.road], ['marking', M.marking, ORDER.marking],
     ];
-    // tree templates
-    const trunkGeo = new THREE.CylinderGeometry(0.16, 0.24, 1, 5, 1, true);
+    // tree templates: round crowns with smooth normals (clean toon bands, no facet lines), chunky trunks
+    const trunkGeo = new THREE.CylinderGeometry(0.26, 0.36, 1, 6, 1, true);
     trunkGeo.translate(0, 0.5, 0);
     const crownGeo = new THREE.IcosahedronGeometry(1, this.settings.quality === 'high' ? 1 : 0);
-    const coneGeo = new THREE.ConeGeometry(1, 1, 7, 1);
+    const cp = crownGeo.attributes.position, cn = crownGeo.attributes.normal;
+    for (let i = 0; i < cp.count; i++) { v3.set(cp.getX(i), cp.getY(i), cp.getZ(i)).normalize(); cn.setXYZ(i, v3.x, v3.y, v3.z); }
+    const coneGeo = new THREE.ConeGeometry(1, 1, 8, 1);
     coneGeo.translate(0, 0.5, 0);
     const lampGeo = mergeBoxes([
-      [0, 4.1, 0, 0.14, 8.2, 0.14, 0x55595e],
-      [0, 8.1, 0.9, 0.08, 0.08, 1.8, 0x55595e],
+      [0, 4.1, 0, 0.3, 8.2, 0.3, PAL.plum],
+      [0, 8.1, 0.9, 0.2, 0.2, 1.8, PAL.plum],
     ]);
-    const bulbGeo = new THREE.BoxGeometry(0.5, 0.14, 0.26);
-    bulbGeo.translate(0, 8.0, 1.75);
-    const lampMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-    this.bulbMat = new THREE.MeshBasicMaterial({ color: 0x777777, toneMapped: false });
+    const bulbGeo = new THREE.BoxGeometry(0.6, 0.24, 0.36);
+    bulbGeo.translate(0, 7.95, 1.75);
+    const lampMat = hideBeyond(toon({ vertexColors: true }), 75, 'lamp');
+    this.bulbMat = hideBeyond(new THREE.MeshBasicMaterial({ color: 0x777777 }), 75, 'bulb');
     const poolGeo = new THREE.CircleGeometry(5.5, 16);
     poolGeo.rotateX(-Math.PI / 2);
     poolGeo.translate(0, 0, 2.6);
     this.poolMat = new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, map: radialTexture() });
-    const greens = [0x4f7a3a, 0x5b8a3c, 0x46703a, 0x6a9443, 0x587f3e];
-    const autumn = [0xb8962e, 0xc77d2c, 0x9c9a3a, 0xa8742a];
-    const poplar = [0x6f9a3e, 0x7da444, 0x8fa83c, 0xb6a83a];
-    const conifer = [0x2f5a3a, 0x355f40, 0x2b5236];
+    const greens = [PAL.leaf, PAL.grass, 0x5cc24f, 0x43a047, PAL.leaf];
+    const autumn = [PAL.apricot, PAL.orange, PAL.yellow, PAL.gold];
+    const poplar = [PAL.grass, 0x9bdb55, PAL.lime, PAL.yellow];
+    const conifer = [PAL.forest, 0x2a8a5a, 0x267a4c];
     const rnd = mulberry32(7);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     let tris = 0;
@@ -885,19 +893,22 @@ export function mergeBoxes(list) {
   return g;
 }
 
+// round blob in three hard rings (blob shadows, lamp pools, headlight glow), point-sampled
 let radialTex = null;
 export function radialTexture() {
   if (radialTex) return radialTex;
   const c = document.createElement('canvas');
-  c.width = c.height = 64;
+  c.width = c.height = 32;
   const g = c.getContext('2d');
-  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gr.addColorStop(0, 'rgba(255,255,255,1)');
-  gr.addColorStop(0.5, 'rgba(255,255,255,0.45)');
-  gr.addColorStop(1, 'rgba(255,255,255,0)');
-  g.fillStyle = gr;
-  g.fillRect(0, 0, 64, 64);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const r = Math.hypot(x + 0.5 - 16, y + 0.5 - 16) / 16;
+    const a = r < 0.42 ? 1 : r < 0.72 ? 0.62 : r < 0.98 ? 0.3 : 0;
+    g.fillStyle = `rgba(255,255,255,${a})`;
+    g.fillRect(x, y, 1, 1);
+  }
   radialTex = new THREE.CanvasTexture(c);
+  radialTex.magFilter = radialTex.minFilter = THREE.NearestFilter;
+  radialTex.generateMipmaps = false;
   return radialTex;
 }
 

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { rand } from '../util/math.js';
 import { ORDER } from '../world/city.js';
+import { NO_NORMAL_PARS, NO_NORMAL } from '../world/materials.js';
 
 const VERT = /* glsl */ `
 attribute vec4 aColor; attribute float aSize;
@@ -13,15 +14,18 @@ void main() {
   gl_PointSize = clamp(aSize * uScale / max(0.1, -mv.z), 0.0, 400.0);
   gl_Position = projectionMatrix * mv;
 }`;
+// crisp pixel puffs: a hard round disc with a lighter core, no soft falloff
 const FRAG = /* glsl */ `
+${NO_NORMAL_PARS}
 varying vec4 vColor;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float d = length(c) * 2.0;
-  float a = smoothstep(1.0, 0.25, d) * vColor.a;
-  if (a < 0.01) discard;
+  if (d > 1.0 || vColor.a < 0.02) discard;
+  float a = (d < 0.55 ? 1.0 : 0.7) * vColor.a;
   gl_FragColor = vec4(vColor.rgb, a);
   #include <colorspace_fragment>
+  ${NO_NORMAL}
 }`;
 
 class Pool {

@@ -5,6 +5,8 @@ import { moveHuman, updateRagdoll } from './peds.js';
 import { TrafficDriver } from './traffic.js';
 import { clamp, rand, chance, dampAngle } from '../util/math.js';
 import { mergeBoxes } from '../world/city.js';
+import { toon } from '../world/materials.js';
+import { PAL } from '../world/palette.js';
 
 const HEAT = [0, 1, 4, 9, 16, 26];
 const pt = { x: 0, z: 0, tx: 0, tz: 0 };
@@ -350,11 +352,11 @@ class Helicopter {
     this.fireT = 3;
     this.group = new THREE.Group();
     const body = new THREE.Mesh(mergeBoxes([
-      [0, 1.2, 0, 2.2, 1.9, 4.2, 0x1f3f8a], [0, 1.0, 1.8, 1.9, 1.3, 1.0, 0x9fc3e0], [0, 1.6, -3.8, 0.4, 0.5, 4.2, 0x1f3f8a],
-      [0, 2.2, -5.7, 0.15, 1.4, 0.8, 0x1f3f8a], [0, 2.35, 0, 0.3, 0.4, 0.3, 0x222222], [0.9, 0.1, 0, 0.1, 0.1, 3.2, 0x333333], [-0.9, 0.1, 0, 0.1, 0.1, 3.2, 0x333333],
-      [0, 1.6, 0, 2.25, 0.25, 3.0, 0xf2f2f2],
-    ]), new THREE.MeshLambertMaterial({ vertexColors: true }));
-    this.rotor = new THREE.Mesh(new THREE.BoxGeometry(11, 0.06, 0.35), new THREE.MeshLambertMaterial({ color: 0x222222 }));
+      [0, 1.2, 0, 2.2, 1.9, 4.2, PAL.navy], [0, 1.0, 1.8, 1.9, 1.3, 1.0, PAL.skyLt], [0, 1.6, -3.8, 0.5, 0.6, 4.2, PAL.navy],
+      [0, 2.2, -5.7, 0.25, 1.4, 0.8, PAL.navy], [0, 2.35, 0, 0.4, 0.4, 0.4, PAL.ink], [0.9, 0.1, 0, 0.2, 0.2, 3.2, PAL.plum], [-0.9, 0.1, 0, 0.2, 0.2, 3.2, PAL.plum],
+      [0, 1.6, 0, 2.25, 0.25, 3.0, PAL.white],
+    ]), toon({ vertexColors: true }));
+    this.rotor = new THREE.Mesh(new THREE.BoxGeometry(11, 0.12, 0.45), toon({ color: PAL.ink }));
     this.rotor.position.y = 2.6;
     this.light = game.heliLight;
     this.group.add(body, this.rotor);

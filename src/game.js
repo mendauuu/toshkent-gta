@@ -15,7 +15,8 @@ import { PoliceManager, Cop } from './entities/police.js';
 import { Combat, WEAPONS } from './entities/weapons.js';
 import { Pickups } from './entities/pickups.js';
 import { Effects } from './fx/effects.js';
-import { fitPixelCanvas } from './fx/pixel.js';
+import { PixelPipeline } from './fx/pixel.js';
+import { cutePaint } from './world/palette.js';
 import { Audio } from './audio/audio.js';
 import { Hud } from './ui/hud.js';
 import { MapRenderer } from './ui/minimap.js';
@@ -40,14 +41,17 @@ export class Game {
     this.missionNPCs = [];
     this.save = NEW_SAVE();
     this.gps = null;
-    // pixel-art look: no anti-aliasing, and the scene renders at a low internal resolution that
-    // onResize() fits to the window (see fx/pixel.js)
+    // pixel-art look: flat toon colours with no tone mapping, hard shadows, no anti-aliasing; the
+    // scene renders at a low internal resolution with 1-pixel outlines (see fx/pixel.js)
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
-    this.renderer.toneMapping = THREE.NeutralToneMapping;
-    this.renderer.toneMappingExposure = 1.0;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.toneMapping = THREE.NoToneMapping;
+    this.renderer.shadowMap.type = THREE.BasicShadowMap;
+    this.renderer.setClearColor(0x000000, 0); // alpha 0 marks "no normal" in the outline buffer
+    this.renderer.info.autoReset = false; // a frame is several passes; frame() resets the counters
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.3, 9000);
+    this.pixel = new PixelPipeline(this.renderer, canvas);
+    this.pixel.onDeviceResize = () => this.onResize();
     this.onResize();
     this.collision = new CollisionWorld(map.scenery, map.bounds);
     this.graph = new RoadGraph(map.graph, map.names);
@@ -106,9 +110,9 @@ export class Game {
     this.headGlow.visible = false;
     this.scene.add(this.headGlow);
     this.player.x = this.spots.spawn.x; this.player.z = this.spots.spawn.z;
-    this.fx.setScale(this.renderer.domElement.height, this.camera.fov);
+    this.fx.setScale(this.pixel.height, this.camera.fov);
     progress(0.97, 'Compiling shaders…');
-    this.renderer.compile(this.scene, this.camera);
+    this.pixel.compile(this.scene, this.camera);
     progress(1, 'Ready');
     this.state = 'title';
     this.titleT = 0;
@@ -429,7 +433,7 @@ export class Game {
     if (this.player.money < cost) { this.hud.notify(`Moyka costs ${formatMoney(cost)} so‘m`, 'bad'); return; }
     this.addMoney(-cost);
     v.paint = this.pickups.randomPaint(v);
-    v.material.userData.u.uPaint.value.set(v.paint);
+    v.material.userData.u.uPaint.value.set(cutePaint(v.paint));
     v.health = v.maxHealth; v.burnTime = 0;
     const had = this.police.level > 0;
     this.police.clear();
@@ -498,9 +502,9 @@ export class Game {
     if (before !== this.renderer.shadowMap.enabled) this.scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); });
   }
 
-  // internal pixel resolution from Settings, scaled up to the window by a whole number
+  // internal pixel resolution from Settings, scaled up to the screen by a whole number
   onResize() {
-    this.pixel = fitPixelCanvas(this.renderer, this.canvas, this.settings.pixelRes);
+    this.pixel.resize(this.settings.pixelRes);
     this.camera.aspect = this.pixel.width / this.pixel.height;
     this.camera.updateProjectionMatrix();
     this.fx?.setScale(this.pixel.height, this.camera.fov);
@@ -644,6 +648,7 @@ export class Game {
 
   frame(dt, realDt) {
     const p = this.player;
+    this.renderer.info.reset();
     if (this.state !== 'title') {
       p.visible = true;
       if (this.debugCam) {
@@ -705,6 +710,6 @@ export class Game {
       this.mapRenderer.updateMini(realDt);
     }
     this.audio.update(realDt);
-    this.renderer.render(this.scene, this.camera);
+    this.pixel.render(this.scene, this.camera);
   }
 }

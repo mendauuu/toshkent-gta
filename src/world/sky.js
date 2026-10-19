@@ -1,7 +1,8 @@
-// Sky dome, sun/moon light, fog and the day/night cycle (Tashkent in mid-October).
+// Pixel-art sky (hard colour bands, crisp clouds, pixel sun, moon and stars), sun/moon light, fog
+// and the day/night cycle (Tashkent in mid-October).
 import * as THREE from 'three';
 import { clamp, lerp, smoothstep } from '../util/math.js';
-import { sharedUniforms } from './materials.js';
+import { sharedUniforms, NO_NORMAL_PARS, NO_NORMAL } from './materials.js';
 
 const SKY_VERT = /* glsl */ `
 varying vec3 vDir;
@@ -11,6 +12,7 @@ void main() {
 }`;
 
 const SKY_FRAG = /* glsl */ `
+${NO_NORMAL_PARS}
 uniform vec3 uTop; uniform vec3 uHorizon; uniform vec3 uBottom; uniform vec3 uSunDir; uniform vec3 uSunColor;
 uniform vec3 uMountain; uniform float uNight; uniform float uTime; uniform float uCloud;
 varying vec3 vDir;
@@ -18,62 +20,65 @@ float h1(float n) { return fract(sin(n) * 43758.5453); }
 float h2(vec2 p) { p = fract(p * vec2(234.34, 435.345)); p += dot(p, p + 34.23); return fract(p.x * p.y); }
 float n2(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
   return mix(mix(h2(i), h2(i + vec2(1, 0)), u.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), u.x), u.y); }
-float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++) { v += a * n2(p); p *= 2.03; a *= 0.5; } return v; }
+float fbm(vec2 p) { float v = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { v += a * n2(p); p *= 2.03; a *= 0.5; } return v / 0.875; }
 float n1(float x) { float i = floor(x), f = fract(x); return mix(h1(i), h1(i + 1.0), f * f * (3.0 - 2.0 * f)); }
 float ridge(float az, float seed) {
   float w = smoothstep(0.05, 0.75, cos(az - 0.95));   // mountains rise to the north-east (Chimgan, Chatkal)
-  float hgt = n1(az * 9.0 + seed) * 0.55 + n1(az * 23.0 + seed * 2.0) * 0.3 + n1(az * 61.0 + seed) * 0.15;
+  float hgt = n1(az * 9.0 + seed) * 0.6 + n1(az * 23.0 + seed * 2.0) * 0.4;
   return w * (0.022 + hgt * 0.05) - 0.004;
 }
 void main() {
   vec3 d = normalize(vDir);
   float h = d.y;
-  vec3 col = mix(uHorizon, uTop, pow(smoothstep(-0.02, 0.55, h), 0.75));
-  // below the horizon the sky blends into the fogged ground
+  // four hard bands from the horizon up
+  vec3 col = h > 0.32 ? uTop : h > 0.16 ? mix(uHorizon, uTop, 0.67) : h > 0.06 ? mix(uHorizon, uTop, 0.33) : uHorizon;
   if (h < 0.0) col = uBottom;
-  float sd = max(dot(d, uSunDir), 0.0);
-  col += uSunColor * (pow(sd, 1400.0) * 9.0 + pow(sd, 18.0) * 0.18 + pow(sd, 3.0) * 0.06);
-  // moon (opposite the sun)
-  float md = max(dot(d, -uSunDir), 0.0);
-  col += vec3(0.85, 0.9, 1.0) * (pow(md, 2600.0) * 5.0 + pow(md, 60.0) * 0.05) * uNight;
-  // stars
-  if (h > 0.0 && uNight > 0.01) {
-    vec2 sp = d.xz / (d.y + 0.35) * 160.0;
-    float s = step(0.9965, h2(floor(sp)));
-    float tw = 0.6 + 0.4 * sin(uTime * 3.0 + h2(floor(sp)) * 40.0);
-    col += vec3(s * tw) * uNight * smoothstep(0.02, 0.25, h);
+  // sun: a round pixel disc with one halo ring; the moon (opposite) is a pale disc with a crescent bite
+  float sd = dot(d, uSunDir), md = dot(d, -uSunDir);
+  if (sd > 0.99935) col = mix(vec3(1.0, 0.97, 0.82), uSunColor, 0.25);
+  else if (sd > 0.9978) col = mix(col, uSunColor, 0.45);
+  if (uNight > 0.3) {
+    vec3 bite = normalize(-uSunDir + vec3(0.012, 0.004, 0.0));
+    if (md > 0.99955 && dot(d, bite) < 0.99962) col = vec3(0.92, 0.94, 1.0);
+    else if (md > 0.9983 && md <= 0.99955) col = mix(col, vec3(0.55, 0.6, 0.95), 0.35);
   }
-  // clouds
-  if (h > 0.0) {
-    vec2 cp = d.xz / (d.y + 0.12) * 1.3 + vec2(uTime * 0.004, uTime * 0.0015);
-    float c = smoothstep(0.52 - uCloud * 0.12, 0.85, fbm(cp));
-    vec3 cc = mix(uHorizon * 1.05, vec3(1.0), 0.6) * mix(1.0, 0.25, uNight) + uSunColor * pow(sd, 6.0) * 0.4;
-    col = mix(col, cc, c * smoothstep(0.0, 0.18, h) * 0.85);
+  // stars: single pixels that blink on and off
+  if (h > 0.05 && uNight > 0.25) {
+    vec2 sp = floor(d.xz / (d.y + 0.35) * 62.0);
+    float s = step(0.992, h2(sp));
+    float on = step(0.25, fract(uTime * 0.5 + h2(sp + 7.0)));
+    if (s * on > 0.5) col = vec3(1.0, 0.96, 0.82);
   }
-  // distant mountains on the horizon
+  // clouds: crisp two-tone puffs (lit body, soft rim)
+  if (h > 0.04) {
+    vec2 cp = d.xz / (d.y + 0.12) * 1.15 + vec2(uTime * 0.004, uTime * 0.0015);
+    float c = fbm(cp * 1.6);
+    float t = 0.62 - uCloud * 0.12;
+    vec3 lit = mix(mix(vec3(1.0), uSunColor, 0.18), uHorizon * 1.6, uNight * 0.7);
+    vec3 rim = mix(lit, mix(uHorizon, uTop, 0.5), 0.45);
+    if (c > t + 0.06) col = lit; else if (c > t) col = rim;
+  }
+  // distant mountains on the horizon: flat silhouettes with a snow line
   float az = atan(d.x, -d.z);
   float r1 = ridge(az, 3.0), r2 = ridge(az, 11.0) * 0.72;
-  if (h < r1 && h > 0.0) {
-    float snow = smoothstep(r1 - 0.02, r1 - 0.004, h) * smoothstep(0.045, 0.065, r1);
-    vec3 m = mix(uMountain, uHorizon, 0.55) + snow * vec3(0.12) * (1.0 - uNight);
-    col = mix(col, m, 0.85 * smoothstep(0.0, 0.006, h));
-  }
-  if (h < r2 && h > 0.0) col = mix(col, mix(uMountain, uHorizon, 0.3), 0.8 * smoothstep(0.0, 0.006, h));
-  // haze: the band just above the horizon fades into the fog colour
-  col = mix(uBottom, col, smoothstep(-0.004, 0.035, h));
+  if (h > 0.0 && h < r1) col = (h > r1 - 0.008 && r1 > 0.05) ? mix(vec3(1.0), uHorizon, 0.25 + uNight * 0.6) : mix(uMountain, uHorizon, 0.45);
+  if (h > 0.0 && h < r2) col = mix(uMountain, uHorizon, 0.15);
+  if (h > 0.0 && h < 0.006) col = uBottom;
   gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  ${NO_NORMAL}
 }`;
 
-// key frames by sun elevation (degrees)
+// key frames by sun elevation (degrees). Light intensities are tuned for the toon ramp with no tone
+// mapping: in full sun a surface facing the sun shows its own palette colour, a side-lit one ~83% and
+// a shadowed one ~70% (perceived brightness), so shadows stay bright and cute.
 const KEYS = [
-  { el: -18, top: 0x03060f, hor: 0x0b1222, bot: 0x05070c, sun: 0xa8bce8, sunI: 0.38, hemiSky: 0x4a5a88, hemiGround: 0x1c1a20, hemiI: 0.78, fog: 0x0c1324, mount: 0x0a0f1c },
-  { el: -6, top: 0x0f1a36, hor: 0x2a2e48, bot: 0x0b0d14, sun: 0x8f9fd0, sunI: 0.35, hemiSky: 0x5b6a96, hemiGround: 0x25212a, hemiI: 0.82, fog: 0x232a40, mount: 0x1a1f33 },
-  { el: -1, top: 0x2a3d6e, hor: 0xc77a52, bot: 0x2c2420, sun: 0xff8a4a, sunI: 0.5, hemiSky: 0x9a8fae, hemiGround: 0x3a2e28, hemiI: 0.85, fog: 0x7d6a6a, mount: 0x3d3346 },
-  { el: 6, top: 0x4a74b0, hor: 0xf0b585, bot: 0x5a4b3e, sun: 0xffb375, sunI: 1.7, hemiSky: 0xc4c6cf, hemiGround: 0x6a5a48, hemiI: 1.0, fog: 0xd4b9a0, mount: 0x7d7690 },
-  { el: 18, top: 0x3b78c6, hor: 0xb9d2ea, bot: 0x7c7466, sun: 0xffeccf, sunI: 2.6, hemiSky: 0xd2dbe4, hemiGround: 0x7b6d56, hemiI: 1.1, fog: 0xbcd0e2, mount: 0x8d9ab4 },
-  { el: 45, top: 0x2f6fc4, hor: 0xb3d0ec, bot: 0x7c7466, sun: 0xfff6e8, sunI: 3.0, hemiSky: 0xd6dfe8, hemiGround: 0x83745c, hemiI: 1.15, fog: 0xbfd4e8, mount: 0x93a2bd },
+  { el: -18, top: 0x1d1b4f, hor: 0x3b3f8f, bot: 0x34397f, sun: 0x9fb3ff, sunI: 0.55, hemiSky: 0x4a5bb0, hemiGround: 0x3f4f9e, hemiI: 1.0, fog: 0x34397f, mount: 0x262a66 },
+  { el: -6, top: 0x2e2a6e, hor: 0x8a5fb0, bot: 0x6b5aa8, sun: 0xb0a0ff, sunI: 0.6, hemiSky: 0x7d74c8, hemiGround: 0x6c63b0, hemiI: 1.1, fog: 0x6b5aa8, mount: 0x3c3478 },
+  { el: -1, top: 0x4a5ac8, hor: 0xff9f6b, bot: 0xf08f7a, sun: 0xffb070, sunI: 0.95, hemiSky: 0xd2a0c0, hemiGround: 0xc090b0, hemiI: 1.25, fog: 0xf08f7a, mount: 0x7a4f8a },
+  { el: 6, top: 0x5aa8f0, hor: 0xffd0a0, bot: 0xffc89a, sun: 0xffd9a0, sunI: 1.5, hemiSky: 0xe8d4d8, hemiGround: 0xdcc8cc, hemiI: 1.35, fog: 0xffc89a, mount: 0x9a7fa8 },
+  { el: 18, top: 0x3aa0f0, hor: 0xbfe8ff, bot: 0xbfe8ff, sun: 0xfff2d8, sunI: 1.7, hemiSky: 0xeef2ff, hemiGround: 0xe2e6f4, hemiI: 1.45, fog: 0xbfe8ff, mount: 0x8f9fd8 },
+  { el: 45, top: 0x2f97ee, hor: 0xb3e5ff, bot: 0xb3e5ff, sun: 0xfff6e8, sunI: 1.75, hemiSky: 0xf0f4ff, hemiGround: 0xe4e8f6, hemiI: 1.45, fog: 0xb3e5ff, mount: 0x8f9fd8 },
 ];
 const colorKeys = ['top', 'hor', 'bot', 'sun', 'hemiSky', 'hemiGround', 'fog', 'mount'];
 KEYS.forEach((k) => colorKeys.forEach((c) => { k[c] = new THREE.Color(k[c]); }));
@@ -95,21 +100,13 @@ export class Environment {
     this.sky.renderOrder = -1000;
     this.sky.frustumCulled = false;
     scene.add(this.sky);
-    this.skyScene = new THREE.Scene();
-    this.skyForEnv = new THREE.Mesh(this.sky.geometry, skyMat);
-    this.skyForEnv.scale.setScalar(100);
-    this.skyScene.add(this.skyForEnv);
-    this.pmrem = new THREE.PMREMGenerator(renderer);
-    this.envTarget = null;
-    this.envTimer = 0;
-    this.lastEnvTime = -999;
 
-    this.sun = new THREE.DirectionalLight(0xffffff, 2.5);
+    this.sun = new THREE.DirectionalLight(0xffffff, 1.7);
     this.sun.target = new THREE.Object3D();
     scene.add(this.sun, this.sun.target);
-    this.hemi = new THREE.HemisphereLight(0xc4dbf5, 0x7b6d56, 1.1);
+    this.hemi = new THREE.HemisphereLight(0xf0f4ff, 0xe4e8f6, 1.45);
     scene.add(this.hemi);
-    this.fog = new THREE.Fog(0xbcd0e2, 150, 900);
+    this.fog = new THREE.Fog(0xb3e5ff, 300, 650);
     scene.fog = this.fog;
     this.sunDir = new THREE.Vector3();
     this.night = 0;
@@ -117,6 +114,7 @@ export class Environment {
     this.update(0, new THREE.Vector3());
   }
 
+  // hard-edged pixel shadows (BasicShadowMap is set on the renderer); Low has none
   applyShadowSettings() {
     const q = this.settings.quality;
     const enabled = q !== 'low';
@@ -132,8 +130,10 @@ export class Environment {
       this.sun.shadow.mapSize.set(size, size);
       if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
     }
-    this.sun.shadow.bias = -0.0004;
-    this.sun.shadow.normalBias = 0.5;
+    // small offsets in toy-scale world units (the shadow depth range is ~900 m): big ones push the
+    // ground's shadow lookup up into low objects such as cars and give striped acne under them
+    this.sun.shadow.bias = -0.00008;
+    this.sun.shadow.normalBias = 0.06;
   }
 
   get hours() { return this.time / 60; }
@@ -187,10 +187,11 @@ export class Environment {
     this.hemi.color.copy(L('hemiSky'));
     this.hemi.groundColor.copy(L('hemiGround'));
     this.hemi.intensity = lerp(a.hemiI, b.hemiI, f);
+    // fog only in the far distance, in hard steps (see fog chunk in materials.js)
     this.fog.color.copy(L('fog'));
     const dd = this.settings.drawDistance;
-    this.fog.near = dd * 0.22;
-    this.fog.far = dd * 1.02;
+    this.fog.near = dd * 0.5;
+    this.fog.far = dd * 1.0;
     // shadow camera follows the focus point, snapped to texels to avoid shimmering
     const range = this.shadowRange;
     const texel = (2 * range) / this.sun.shadow.mapSize.x;
@@ -203,16 +204,6 @@ export class Environment {
     this.sun.target.position.copy(snapped);
     this.sun.position.copy(snapped).addScaledVector(lightDir, 400);
     this.sun.target.updateMatrixWorld();
-    // environment map for reflective materials, refreshed as the light changes
-    this.envTimer -= dt;
-    if (this.envTimer <= 0 && Math.abs(this.time - this.lastEnvTime) > 8) {
-      this.envTimer = 2;
-      this.lastEnvTime = this.time;
-      const old = this.envTarget;
-      this.envTarget = this.pmrem.fromScene(this.skyScene, 0, 0.1, 200);
-      this.scene.environment = this.envTarget.texture;
-      if (old) old.dispose();
-    }
   }
 
   followCamera(camera) { this.sky.position.copy(camera.position); }

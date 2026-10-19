@@ -1,6 +1,8 @@
-// Hand-built models for Tashkent landmarks placed at their real OSM coordinates.
+// Hand-built models for Tashkent landmarks placed at their real OSM coordinates, toon-shaded in the
+// cute pixel palette.
 import * as THREE from 'three';
-import { makeFarFogMaterial } from './materials.js';
+import { makeFarFogMaterial, toon } from './materials.js';
+import { cuteGeometry } from './palette.js';
 import { ringCentroid, ringArea, pointInRing } from '../util/math.js';
 
 const C = (hex) => new THREE.Color(hex);
@@ -209,10 +211,10 @@ export function buildLandmarks(game) {
   const { scene, map, collision } = game;
   const L = Object.fromEntries(map.landmarks.map((l) => [l.id, l]));
   const farMat = makeFarFogMaterial({ vertexColors: true });
-  const nearMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const nearMat = toon({ vertexColors: true });
   const group = new THREE.Group();
   const add = (geo, x, z, rot = 0, far = false) => {
-    const m = new THREE.Mesh(geo, far ? farMat : nearMat);
+    const m = new THREE.Mesh(cuteGeometry(geo), far ? farMat : nearMat);
     m.position.set(x, 0, z);
     m.rotation.y = rot;
     m.castShadow = true;
@@ -275,7 +277,7 @@ export function buildLandmarks(game) {
     lights.push([cx, b.h + b.roofH + 1, cz]);
   }
   const lightGeo = new THREE.SphereGeometry(1.1, 8, 6);
-  const lightMat = new THREE.MeshBasicMaterial({ color: 0xff2010, toneMapped: false, fog: false });
+  const lightMat = new THREE.MeshBasicMaterial({ color: 0xff2010, fog: false });
   const lightMesh = new THREE.InstancedMesh(lightGeo, lightMat, Math.max(1, lights.length));
   const m4 = new THREE.Matrix4();
   lights.forEach(([x, y, z], i) => { m4.makeTranslation(x, y, z); lightMesh.setMatrixAt(i, m4); });

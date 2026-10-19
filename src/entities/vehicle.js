@@ -1,6 +1,8 @@
 // Vehicle physics (arcade bicycle model), collisions, damage and the vehicle manager.
 import * as THREE from 'three';
 import { VTYPES, vehicleGeometry, wheelGeometry, makeVehicleMaterial } from './vehicleModels.js';
+import { toon } from '../world/materials.js';
+import { cutePaint } from '../world/palette.js';
 import { clamp, choice, rand } from '../util/math.js';
 
 const MAX_VEHICLES = 90;
@@ -38,7 +40,7 @@ export class Vehicle {
     this.smokeT = 0;
     this.skid = 0;
     this.material = makeVehicleMaterial();
-    this.material.userData.u.uPaint.value.set(this.paint);
+    this.material.userData.u.uPaint.value.set(cutePaint(this.paint));
     this.mesh = new THREE.Mesh(vehicleGeometry(typeId), this.material);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -267,7 +269,7 @@ export class VehicleManager {
   constructor(game) {
     this.game = game;
     this.list = [];
-    this.wheelMesh = new THREE.InstancedMesh(wheelGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0.2 }), MAX_VEHICLES * 4);
+    this.wheelMesh = new THREE.InstancedMesh(wheelGeometry(), toon({ vertexColors: true }), MAX_VEHICLES * 4);
     this.wheelMesh.count = 0;
     this.wheelMesh.frustumCulled = false;
     this.wheelMesh.castShadow = false;

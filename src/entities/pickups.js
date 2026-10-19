@@ -4,17 +4,22 @@ import * as THREE from 'three';
 import { mulberry32, ringCentroid, ringArea, choice } from '../util/math.js';
 import { WEAPONS } from './weapons.js';
 import { VTYPES } from './vehicleModels.js';
+import { toon, NO_NORMAL_PARS, NO_NORMAL } from '../world/materials.js';
 
 const MARKER_VERT = /* glsl */ `
 varying float vH;
 void main() { vH = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+// glowing beam in three hard steps that pulse
 const MARKER_FRAG = /* glsl */ `
+${NO_NORMAL_PARS}
 uniform vec3 uColor; uniform float uTime; uniform float uOpacity;
 varying float vH;
 void main() {
-  float a = (1.0 - vH) * (0.55 + 0.15 * sin(uTime * 4.0)) * uOpacity;
-  gl_FragColor = vec4(uColor * 1.4, a);
+  float band = vH < 0.34 ? 1.0 : vH < 0.67 ? 0.6 : 0.3;
+  float a = band * (sin(uTime * 4.0) > 0.0 ? 0.7 : 0.55) * uOpacity;
+  gl_FragColor = vec4(uColor * 1.3, a);
   #include <colorspace_fragment>
+  ${NO_NORMAL}
 }`;
 
 const markerGeo = (() => { const g = new THREE.CylinderGeometry(1, 1, 1, 28, 1, true); g.translate(0, 0.5, 0); return g; })();
@@ -86,8 +91,8 @@ export class Pickups {
     this.game = game;
     this.list = [];
     this.geos = buildPickupGeometries();
-    this.mat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x222222 });
-    this.goldMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.9, roughness: 0.25, emissive: 0x3a2a00 });
+    this.mat = toon({ vertexColors: true, emissive: 0x222222 });
+    this.goldMat = toon({ vertexColors: true, emissive: 0x4a3200 });
     this.places = [];
     this.t = 0;
   }

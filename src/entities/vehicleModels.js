@@ -1,25 +1,29 @@
-// Procedural low-poly vehicles typical for Tashkent streets, one merged geometry per type.
+// Procedural low-poly vehicles typical for Tashkent streets, one merged geometry per type, in the
+// cute pixel palette with flat toon shading.
 // aMat: 0 fixed colour, 1 paint, 2 glass, 3 headlight, 4 taillight, 5 siren red, 6 siren blue, 7 chrome/trim
 import * as THREE from 'three';
+import { PAL } from '../world/palette.js';
+import { TOON_RAMP } from '../world/materials.js';
 
-const WHITE = 0xf1f1ee;
-const COMMON = [WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, 0xc8cbcf, 0x1c1e21, 0x2a3e62, 0xb9aa8b, 0x6a1e24, 0x8c9196];
+const WHITE = PAL.white;
+// same list lengths as before, so traffic picks paints with the same random draws
+const COMMON = [WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, WHITE, PAL.lilac, PAL.plum, PAL.blue, PAL.cream, PAL.coral, PAL.skyLt];
 
 export const VTYPES = {
   kobalt: { name: 'Kobalt', body: 'sedan', L: 4.48, W: 1.74, H: 1.5, clear: 0.27, wheelR: 0.31, mass: 1200, maxSpeed: 47, accel: 7.4, brake: 15, grip: 7.5, steer: 0.62, health: 1000, colors: COMMON },
-  neksiya: { name: 'Neksiya', body: 'sedan_old', L: 4.48, W: 1.66, H: 1.43, clear: 0.27, wheelR: 0.3, mass: 1100, maxSpeed: 43, accel: 6.6, brake: 13, grip: 7, steer: 0.62, health: 900, colors: [...COMMON, 0x355e3b, 0x7c7f2b] },
+  neksiya: { name: 'Neksiya', body: 'sedan_old', L: 4.48, W: 1.66, H: 1.43, clear: 0.27, wheelR: 0.3, mass: 1100, maxSpeed: 43, accel: 6.6, brake: 13, grip: 7, steer: 0.62, health: 900, colors: [...COMMON, PAL.leaf, PAL.lime] },
   lasetti: { name: 'Lasetti', body: 'sedan', L: 4.52, W: 1.73, H: 1.45, clear: 0.27, wheelR: 0.31, mass: 1250, maxSpeed: 49, accel: 7.8, brake: 15, grip: 7.6, steer: 0.6, health: 1000, colors: COMMON },
-  spark: { name: 'Spark', body: 'hatch', L: 3.64, W: 1.6, H: 1.52, clear: 0.25, wheelR: 0.29, mass: 950, maxSpeed: 41, accel: 6.9, brake: 14, grip: 7.8, steer: 0.68, health: 800, colors: [WHITE, WHITE, WHITE, 0xd8262e, 0x2f73c9, 0x9fd8c8, 0xf2c230, 0xc8cbcf] },
-  matiz: { name: 'Matiz', body: 'hatch_small', L: 3.5, W: 1.5, H: 1.5, clear: 0.24, wheelR: 0.27, mass: 800, maxSpeed: 36, accel: 5.8, brake: 13, grip: 7.4, steer: 0.7, health: 700, colors: [WHITE, WHITE, 0xd8262e, 0x2f73c9, 0x9fd8c8, 0xe9d98a, 0x7fb24a, 0x1c1e21] },
-  damas: { name: 'Damas', body: 'van', L: 3.48, W: 1.4, H: 1.92, clear: 0.26, wheelR: 0.27, mass: 950, maxSpeed: 31, accel: 5.0, brake: 12, grip: 6.4, steer: 0.68, health: 850, colors: [WHITE, WHITE, WHITE, WHITE, 0xc8cbcf, 0xe9d98a] },
-  labo: { name: 'Labo', body: 'pickup', L: 3.48, W: 1.4, H: 1.85, clear: 0.26, wheelR: 0.27, mass: 900, maxSpeed: 32, accel: 5.0, brake: 12, grip: 6.5, steer: 0.68, health: 850, colors: [WHITE, WHITE, WHITE, 0xc8cbcf, 0x2f73c9] },
-  malibu: { name: 'Malibu', body: 'sedan_big', L: 4.93, W: 1.85, H: 1.46, clear: 0.27, wheelR: 0.33, mass: 1500, maxSpeed: 55, accel: 8.6, brake: 16, grip: 8, steer: 0.58, health: 1100, colors: [WHITE, 0x1c1e21, 0x1c1e21, 0xc8cbcf, 0x2a3e62, 0x8c9196] },
-  treker: { name: 'Treker', body: 'suv', L: 4.27, W: 1.79, H: 1.68, clear: 0.36, wheelR: 0.35, mass: 1450, maxSpeed: 47, accel: 7.4, brake: 14, grip: 7.2, steer: 0.6, health: 1150, colors: [WHITE, WHITE, 0x1c1e21, 0x8a2a2a, 0xc8cbcf, 0x3b5f7d] },
+  spark: { name: 'Spark', body: 'hatch', L: 3.64, W: 1.6, H: 1.52, clear: 0.25, wheelR: 0.29, mass: 950, maxSpeed: 41, accel: 6.9, brake: 14, grip: 7.8, steer: 0.68, health: 800, colors: [WHITE, WHITE, WHITE, PAL.coral, PAL.blue, PAL.mint, PAL.yellow, PAL.pink] },
+  matiz: { name: 'Matiz', body: 'hatch_small', L: 3.5, W: 1.5, H: 1.5, clear: 0.24, wheelR: 0.27, mass: 800, maxSpeed: 36, accel: 5.8, brake: 13, grip: 7.4, steer: 0.7, health: 700, colors: [WHITE, WHITE, PAL.coral, PAL.blue, PAL.mint, PAL.cream, PAL.grass, PAL.pink] },
+  damas: { name: 'Damas', body: 'van', L: 3.48, W: 1.4, H: 1.92, clear: 0.26, wheelR: 0.27, mass: 950, maxSpeed: 31, accel: 5.0, brake: 12, grip: 6.4, steer: 0.68, health: 850, colors: [WHITE, WHITE, WHITE, WHITE, PAL.skyLt, PAL.cream] },
+  labo: { name: 'Labo', body: 'pickup', L: 3.48, W: 1.4, H: 1.85, clear: 0.26, wheelR: 0.27, mass: 900, maxSpeed: 32, accel: 5.0, brake: 12, grip: 6.5, steer: 0.68, health: 850, colors: [WHITE, WHITE, WHITE, PAL.lilac, PAL.blue] },
+  malibu: { name: 'Malibu', body: 'sedan_big', L: 4.93, W: 1.85, H: 1.46, clear: 0.27, wheelR: 0.33, mass: 1500, maxSpeed: 55, accel: 8.6, brake: 16, grip: 8, steer: 0.58, health: 1100, colors: [WHITE, PAL.plum, PAL.plum, PAL.lilac, PAL.navy, PAL.slateLt] },
+  treker: { name: 'Treker', body: 'suv', L: 4.27, W: 1.79, H: 1.68, clear: 0.36, wheelR: 0.35, mass: 1450, maxSpeed: 47, accel: 7.4, brake: 14, grip: 7.2, steer: 0.6, health: 1150, colors: [WHITE, WHITE, PAL.plum, PAL.berry, PAL.lilac, PAL.tealDk] },
   gentra: { name: 'Gentra', body: 'sedan', L: 4.5, W: 1.72, H: 1.45, clear: 0.27, wheelR: 0.31, mass: 1220, maxSpeed: 48, accel: 7.6, brake: 15, grip: 7.6, steer: 0.6, health: 1000, colors: COMMON },
-  bus: { name: 'Avtobus', body: 'bus', L: 11.2, W: 2.5, H: 3.05, clear: 0.42, wheelR: 0.5, mass: 9500, maxSpeed: 22, accel: 2.8, brake: 9, grip: 6, steer: 0.62, health: 2600, colors: [0x2f8fd0, 0x2aa05a] },
-  police: { name: 'Politsiya', body: 'sedan_big', livery: 'police', L: 4.93, W: 1.85, H: 1.46, clear: 0.27, wheelR: 0.33, mass: 1500, maxSpeed: 56, accel: 9.4, brake: 17, grip: 8.4, steer: 0.6, health: 1300, colors: [0xf4f4f4] },
-  taxi: { name: 'Taksi', body: 'sedan', livery: 'taxi', L: 4.48, W: 1.74, H: 1.5, clear: 0.27, wheelR: 0.31, mass: 1200, maxSpeed: 47, accel: 7.4, brake: 15, grip: 7.5, steer: 0.62, health: 1000, colors: [0xf4c430] },
-  sport: { name: 'Samarqand GT', body: 'sport', L: 4.45, W: 1.95, H: 1.18, clear: 0.2, wheelR: 0.33, mass: 1350, maxSpeed: 72, accel: 13, brake: 20, grip: 9.5, steer: 0.56, health: 1000, colors: [0xd81f26, 0xf2c230, 0x1a1a1a, 0x22a6d6, 0xf1f1ee] },
+  bus: { name: 'Avtobus', body: 'bus', L: 11.2, W: 2.5, H: 3.05, clear: 0.42, wheelR: 0.5, mass: 9500, maxSpeed: 22, accel: 2.8, brake: 9, grip: 6, steer: 0.62, health: 2600, colors: [PAL.blue, PAL.teal] },
+  police: { name: 'Politsiya', body: 'sedan_big', livery: 'police', L: 4.93, W: 1.85, H: 1.46, clear: 0.27, wheelR: 0.33, mass: 1500, maxSpeed: 56, accel: 9.4, brake: 17, grip: 8.4, steer: 0.6, health: 1300, colors: [WHITE] },
+  taxi: { name: 'Taksi', body: 'sedan', livery: 'taxi', L: 4.48, W: 1.74, H: 1.5, clear: 0.27, wheelR: 0.31, mass: 1200, maxSpeed: 47, accel: 7.4, brake: 15, grip: 7.5, steer: 0.62, health: 1000, colors: [PAL.yellow] },
+  sport: { name: 'Samarqand GT', body: 'sport', L: 4.45, W: 1.95, H: 1.18, clear: 0.2, wheelR: 0.33, mass: 1350, maxSpeed: 72, accel: 13, brake: 20, grip: 9.5, steer: 0.56, health: 1000, colors: [PAL.coral, PAL.yellow, PAL.plum, PAL.sky, WHITE] },
 };
 export const TRAFFIC_MIX = [
   ['kobalt', 26], ['neksiya', 14], ['lasetti', 10], ['gentra', 9], ['spark', 12], ['matiz', 10], ['damas', 9], ['labo', 3],
@@ -70,11 +74,11 @@ class VB {
   }
 }
 
-const TRIM = 0x26282b, PLATE = 0xf2f2ee, GRILLE = 0x18191b;
+const TRIM = PAL.plum, PLATE = PAL.white, GRILLE = PAL.ink;
 
 function lights(b, L, W, y, front = true, back = true, inset = 0.24, hw = 0.34) {
   if (front) { for (const s of [-1, 1]) b.box(s * (W / 2 - inset), y, L / 2 - 0.01, hw, 0.13, 0.05, 0xffffff, 3); }
-  if (back) { for (const s of [-1, 1]) b.box(s * (W / 2 - inset), y + 0.04, -L / 2 + 0.01, hw * 0.9, 0.14, 0.05, 0xb01010, 4); }
+  if (back) { for (const s of [-1, 1]) b.box(s * (W / 2 - inset), y + 0.04, -L / 2 + 0.01, hw * 0.9, 0.14, 0.05, PAL.coral, 4); }
 }
 
 function plates(b, L, y) {
@@ -155,7 +159,7 @@ function buildBody(t) {
       const bedL = L - 1.3, bz = -L / 2 + bedL / 2;
       for (const s of [-1, 1]) b.box(s * (W / 2 - 0.03), belt + 0.2, bz, 0.06, 0.4, bedL, 0xffffff, 1);
       b.box(0, belt + 0.2, -L / 2 + 0.03, W, 0.4, 0.06, 0xffffff, 1);
-      b.box(0, belt + 0.02, bz, W - 0.1, 0.04, bedL, 0x3a3a3a, 0);
+      b.box(0, belt + 0.02, bz, W - 0.1, 0.04, bedL, PAL.slate, 0);
       lights(b, L, W, c0 + 0.5, true, true, 0.2, 0.26);
       plates(b, L, c0 + 0.26);
       break;
@@ -164,11 +168,11 @@ function buildBody(t) {
       const belt = c0 + 0.85;
       b.frustum(0, c0, 0, W, L, W, L, belt - c0, 0, 0xffffff, 1);
       b.frustum(0, belt, 0, W, L, W - 0.04, L - 0.1, 1.45, -0.02, 0xffffff, 2, { bottom: 2 });
-      b.frustum(0, belt + 1.45, -0.02, W - 0.04, L - 0.1, W - 0.14, L - 0.3, H - belt - 1.45, 0, 0xf0f0f0, 0);
-      for (let z = -L / 2 + 1.5; z < L / 2 - 1; z += 1.6) for (const s of [-1, 1]) b.box(s * (W / 2 - 0.02), belt + 0.72, z, 0.05, 1.4, 0.12, 0xf0f0f0, 0);
+      b.frustum(0, belt + 1.45, -0.02, W - 0.04, L - 0.1, W - 0.14, L - 0.3, H - belt - 1.45, 0, PAL.cloud, 0);
+      for (let z = -L / 2 + 1.5; z < L / 2 - 1; z += 1.6) for (const s of [-1, 1]) b.box(s * (W / 2 - 0.02), belt + 0.72, z, 0.05, 1.4, 0.12, PAL.cloud, 0);
       b.box(0, c0 + 0.15, L / 2, W, 0.3, 0.1, TRIM, 7);
       b.box(0, c0 + 0.15, -L / 2, W, 0.3, 0.1, TRIM, 7);
-      b.box(0, belt + 1.62, L / 2 + 0.02, W * 0.7, 0.24, 0.04, 0x1a1a1a, 0);
+      b.box(0, belt + 1.62, L / 2 + 0.02, W * 0.7, 0.24, 0.04, PAL.ink, 0);
       lights(b, L, W, c0 + 0.55, true, true, 0.3, 0.3);
       break;
     }
@@ -177,9 +181,9 @@ function buildBody(t) {
       b.frustum(0, c0, 0, W, L, W - 0.12, L - 0.35, belt - c0, -0.05, 0xffffff, 1);
       b.frustum(0, belt, -0.25, W - 0.3, L * 0.45, W - 0.62, L * 0.2, H - belt - 0.03, -0.25, 0xffffff, 2, { bottom: 2 });
       b.frustum(0, H - 0.03, -0.5, W - 0.62, L * 0.2, W - 0.64, L * 0.18, 0.03, 0, 0xffffff, 1);
-      b.box(0, belt + 0.18, -L / 2 + 0.15, W - 0.2, 0.05, 0.3, 0x111111, 7); // spoiler
-      for (const s of [-1, 1]) b.box(s * (W / 2 - 0.3), belt + 0.08, -L / 2 + 0.2, 0.06, 0.16, 0.06, 0x111111, 7);
-      b.box(0, c0 + 0.1, L / 2 - 0.03, W - 0.05, 0.16, 0.08, 0x111111, 7);
+      b.box(0, belt + 0.18, -L / 2 + 0.15, W - 0.2, 0.05, 0.3, PAL.ink, 7); // spoiler
+      for (const s of [-1, 1]) b.box(s * (W / 2 - 0.3), belt + 0.08, -L / 2 + 0.2, 0.06, 0.16, 0.06, PAL.ink, 7);
+      b.box(0, c0 + 0.1, L / 2 - 0.03, W - 0.05, 0.16, 0.08, PAL.ink, 7);
       lights(b, L, W, belt - 0.08, true, true, 0.3, 0.42);
       break;
     }
@@ -187,13 +191,13 @@ function buildBody(t) {
   // liveries
   if (t.livery === 'police') {
     const roofY = t.H + 0.02;
-    b.box(-0.32, roofY + 0.08, -L * 0.13, 0.62, 0.14, 0.26, 0xb01010, 5);
-    b.box(0.32, roofY + 0.08, -L * 0.13, 0.62, 0.14, 0.26, 0x1030b0, 6);
-    for (const s of [-1, 1]) b.box(s * (W / 2 + 0.005), t.clear + 0.42, 0, 0.02, 0.2, L * 0.86, 0x1f4fa8, 0);
-    b.box(0, t.clear + 0.62, L / 2 + 0.005, W * 0.5, 0.06, 0.02, 0x1f4fa8, 0);
+    b.box(-0.32, roofY + 0.08, -L * 0.13, 0.62, 0.14, 0.26, PAL.coral, 5);
+    b.box(0.32, roofY + 0.08, -L * 0.13, 0.62, 0.14, 0.26, PAL.blue, 6);
+    for (const s of [-1, 1]) b.box(s * (W / 2 + 0.005), t.clear + 0.42, 0, 0.02, 0.2, L * 0.86, PAL.blue, 0);
+    b.box(0, t.clear + 0.62, L / 2 + 0.005, W * 0.5, 0.06, 0.02, PAL.blue, 0);
   } else if (t.livery === 'taxi') {
-    b.box(0, t.H + 0.12, -L * 0.13, 0.6, 0.2, 0.24, 0xffd23a, 3);
-    for (const s of [-1, 1]) for (let k = 0; k < 10; k++) b.box(s * (W / 2 + 0.005), t.clear + 0.45 + (k % 2) * 0.09, -L * 0.36 + k * L * 0.08, 0.02, 0.09, L * 0.08, k % 2 ? 0x111111 : 0xf4f4f4, 0);
+    b.box(0, t.H + 0.12, -L * 0.13, 0.6, 0.2, 0.24, PAL.yellow, 3);
+    for (const s of [-1, 1]) for (let k = 0; k < 10; k++) b.box(s * (W / 2 + 0.005), t.clear + 0.45 + (k % 2) * 0.09, -L * 0.36 + k * L * 0.08, 0.02, 0.09, L * 0.08, k % 2 ? PAL.ink : PAL.white, 0);
   }
   return b.build();
 }
@@ -205,11 +209,11 @@ export function vehicleGeometry(typeId) {
 }
 
 export function wheelGeometry() {
-  const tire = new THREE.CylinderGeometry(1, 1, 1, 14, 1);
+  const tire = new THREE.CylinderGeometry(1, 1, 1, 12, 1);
   tire.rotateZ(Math.PI / 2);
-  const hub = new THREE.CylinderGeometry(0.62, 0.62, 1.04, 10, 1);
+  const hub = new THREE.CylinderGeometry(0.58, 0.58, 1.04, 8, 1);
   hub.rotateZ(Math.PI / 2);
-  const parts = [[tire, 0x161718], [hub, 0x9a9da3]];
+  const parts = [[tire, PAL.ink], [hub, PAL.lilac]];
   const pos = [], nrm = [], col = [], idx = [];
   const c = new THREE.Color();
   for (const [g, hex] of parts) {
@@ -228,12 +232,13 @@ export function wheelGeometry() {
   return g;
 }
 
+// toon body material: paint, sky-blue glass and lights that glow at night or when braking
 export function makeVehicleMaterial() {
   const u = {
     uPaint: { value: new THREE.Color(0xffffff) }, uHead: { value: 0 }, uBrake: { value: 0 }, uRev: { value: 0 },
     uSirenR: { value: 0 }, uSirenB: { value: 0 }, uDamage: { value: 0 },
   };
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.3, envMapIntensity: 1.0 });
+  const mat = new THREE.MeshToonMaterial({ vertexColors: true, gradientMap: TOON_RAMP });
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, u);
     shader.vertexShader = shader.vertexShader
@@ -243,18 +248,14 @@ export function makeVehicleMaterial() {
       .replace('#include <common>', '#include <common>\nvarying float vMat;\nuniform vec3 uPaint;\nuniform float uHead, uBrake, uRev, uSirenR, uSirenB, uDamage;')
       .replace('#include <color_fragment>', `#include <color_fragment>
         float mt = floor(vMat + 0.5);
-        if (mt == 1.0) diffuseColor.rgb *= mix(uPaint, uPaint * 0.18 + vec3(0.025), uDamage);
-        if (mt == 2.0) diffuseColor.rgb = mix(vec3(0.06, 0.08, 0.1), vec3(0.02), uDamage);
-        if (mt == 3.0 || mt == 4.0) diffuseColor.rgb *= 0.6;`)
-      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-        if (mt == 2.0) roughnessFactor = 0.06; else if (mt == 1.0) roughnessFactor = mix(0.3, 0.85, uDamage); else if (mt == 7.0) roughnessFactor = 0.35; else roughnessFactor = 0.75;`)
-      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
-        if (mt == 2.0) metalnessFactor = 0.55; else if (mt == 1.0) metalnessFactor = mix(0.28, 0.0, uDamage); else if (mt == 7.0) metalnessFactor = 0.6; else metalnessFactor = 0.0;`)
+        if (mt == 1.0) diffuseColor.rgb *= mix(uPaint, uPaint * 0.2 + vec3(0.02, 0.012, 0.03), uDamage);
+        if (mt == 2.0) diffuseColor.rgb = mix(vec3(0.16, 0.5, 0.82), vec3(0.03, 0.02, 0.05), uDamage);
+        if (mt == 3.0 || mt == 4.0) diffuseColor.rgb *= 0.75;`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        if (mt == 3.0) totalEmissiveRadiance += vec3(1.0, 0.94, 0.8) * (0.08 + uHead * 2.6);
-        if (mt == 4.0) totalEmissiveRadiance += vec3(1.0, 0.07, 0.03) * (0.06 + uHead * 0.7 + uBrake * 2.4) + vec3(1.0) * uRev * 1.5;
-        if (mt == 5.0) totalEmissiveRadiance += vec3(1.0, 0.08, 0.05) * (0.1 + uSirenR * 5.0);
-        if (mt == 6.0) totalEmissiveRadiance += vec3(0.1, 0.25, 1.0) * (0.1 + uSirenB * 5.0);`);
+        if (mt == 3.0) totalEmissiveRadiance += vec3(1.0, 0.94, 0.7) * (0.06 + uHead * 2.0);
+        if (mt == 4.0) totalEmissiveRadiance += vec3(1.0, 0.1, 0.05) * (0.08 + uHead * 0.6 + uBrake * 2.0) + vec3(1.0) * uRev * 1.2;
+        if (mt == 5.0) totalEmissiveRadiance += vec3(1.0, 0.1, 0.06) * (0.1 + uSirenR * 4.0);
+        if (mt == 6.0) totalEmissiveRadiance += vec3(0.1, 0.3, 1.0) * (0.1 + uSirenB * 4.0);`);
   };
   mat.customProgramCacheKey = () => 'vehicle';
   mat.userData.u = u;
