@@ -21,6 +21,6 @@ const paths = await packager({
     ProductName: 'Grand Theft Avto: Toshkent',
     InternalName: 'ToshkentGTA',
   },
-  ignore: [/^\/node_modules($|\/)/, /^\/tools($|\/)/, /^\/dist($|\/)/, /^\/docs($|\/)/, /^\/\.claude($|\/)/, /^\/\.git($|\/)/, /^\/package-lock\.json$/, /\.bat$/],
+  ignore: [/^\/node_modules($|\/)/, /^\/tools($|\/)/, /^\/dist($|\/)/, /^\/docs($|\/)/, /^\/Archive_Realistic($|\/)/, /^\/screenshots($|\/)/, /^\/\.claude($|\/)/, /^\/\.git($|\/)/, /^\/package-lock\.json$/, /\.bat$/],
 });
 console.log('Packaged to', paths.join(', '));

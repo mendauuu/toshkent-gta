@@ -2,6 +2,9 @@
 node_modules/
 dist/
 
+# before/after screenshots from tools/harness.cjs scenarios
+screenshots/
+
 # raw OpenStreetMap inputs for tools/extract-osm.mjs and tools/build-map.mjs
 *.osm.pbf
 osm-raw.json
