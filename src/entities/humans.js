@@ -1,101 +1,166 @@
-// People: one instanced mesh for everyone, limbs animated in the vertex shader, toon-shaded in the
-// cute pixel palette.
+// People: one instanced mesh for everyone, chibi toy proportions (big soft head with a pixel face,
+// short round body), limbs animated in the vertex shader, toon-shaded in the cute pixel palette.
 import * as THREE from 'three';
-import { choice, chance, rand } from '../util/math.js';
+import { choice, chance, mulberry32 } from '../util/math.js';
 import { radialTexture, ORDER } from '../world/city.js';
 import { toon } from '../world/materials.js';
 import { PAL, cute } from '../world/palette.js';
+import { PolyBuf, bevelBox } from '../util/shapes.js';
 
 // clothing colours set elsewhere (the player, mission characters) snap to the palette too
 const cuteCache = new Map();
 const cuteCloth = (hex) => { let c = cuteCache.get(hex); if (c === undefined) { c = cute(hex); cuteCache.set(hex, c); } return c; };
 
 // parts: 0 body, 1 left arm, 2 right arm, 3 left leg, 4 right leg
-// slots: 0 shirt, 1 pants, 2 skin, 3 hair, 4 shoes, 5 extra (hat/scarf/dress), 6 black, 7 white, 8 gun
+// slots: 0 shirt, 1 pants, 2 skin, 3 hair, 4 shoes, 5 extra (hat/scarf/dress), 6 black, 7 white, 8 gun, 9 gold
 // variant bits: 1 doppi, 2 police cap, 4 headscarf, 8 dress, 16 gun, 32 hair, 64 beard, 128 jacket tails
 export const VAR = { DOPPI: 1, CAP: 2, SCARF: 4, DRESS: 8, GUN: 16, HAIR: 32, BEARD: 64, COAT: 128 };
 const POSE = { WALK: 0, AIM: 1, HANDSUP: 2, PUNCH: 3, PANIC: 4, DRIVE: 5 };
 export { POSE };
+// faces in the atlas and hair styles (hair parts are tagged with their style)
+export const FACE = { HAPPY: 0, NEUTRAL: 1, SLEEPY: 2, STERN: 3, SHADES: 4 };
+const HAIR_STYLE = { SHORT: 1, BUN: 2, PONYTAIL: 3, CURLY: 4 };
 
+// body measurements (metres): total height stays 1.9 m like before; animation pivots sit where the
+// short limbs now join the body
+const HIP_Y = 0.6, HIP_X = 0.11, SHOULDER_Y = 1.14, SHOULDER_X = 0.3;
+const HEAD = { y: 1.52, w: 0.52, h: 0.52, d: 0.48, r: 0.07 }; // ~2x the old head: 1.26-1.78 m
+
+// ------------------------------------------------------------------ pixel faces (16x16 each)
+// k ink, w white, p blush, g lens glint; '.' shows the skin colour
+const FACES = [
+  ['', '', '', '', '', '', '...kkk....kkk...', '...wkk....wkk...', '...kkk....kkk...', '...kkk....kkk...', '', '.pp..........pp.', '.pp...k..k...pp.', '.......kk.......', '', ''],
+  ['', '', '', '', '', '', '', '...kk......kk...', '...wk......wk...', '...kk......kk...', '', '.pp..........pp.', '.pp...kkkk...pp.', '', '', ''],
+  ['', '', '', '', '', '', '', '', '..k...k..k...k..', '...kkk....kkk...', '', '.pp..........pp.', '.pp....kk....pp.', '.......kk.......', '', ''],
+  ['', '', '', '', '', '..kk........kk..', '....kk....kk....', '...kkk....kkk...', '...kwk....kwk...', '...kkk....kkk...', '', '', '......kkkk......', '.....k....k.....', '', ''],
+  ['', '', '', '', '', '', '..kkkkkkkkkkkk..', '..kgkkk..kgkkk..', '..kkkkk..kkkkk..', '...kkk....kkk...', '', '', '.........kk.....', '......kkk.......', '', ''],
+];
+const FACE_COLORS = { k: '#2b1d3a', w: '#ffffff', p: '#ff9fb2', g: '#9be3ff' };
+let faceTex = null;
+function faceTexture() {
+  if (faceTex) return faceTex;
+  const c = document.createElement('canvas');
+  c.width = 16 * FACES.length; c.height = 16;
+  const g = c.getContext('2d');
+  FACES.forEach((rows, f) => rows.forEach((row, y) => [...row].forEach((ch, x) => {
+    if (!FACE_COLORS[ch]) return;
+    g.fillStyle = FACE_COLORS[ch];
+    g.fillRect(f * 16 + x, y, 1, 1);
+  })));
+  faceTex = new THREE.CanvasTexture(c);
+  faceTex.colorSpace = THREE.SRGBColorSpace;
+  faceTex.magFilter = THREE.NearestFilter;
+  faceTex.minFilter = THREE.NearestMipmapNearestFilter; // far faces fade to skin instead of sparkling
+  faceTex.generateMipmaps = true;
+  return faceTex;
+}
+
+// ------------------------------------------------------------------ geometry
 function buildHumanGeometry() {
-  const pos = [], nrm = [], part = [], slot = [], vari = [], idx = [];
-  const add = (cx, cy, cz, sx, sy, sz, p, s, v = 0) => {
-    const g = new THREE.BoxGeometry(sx, sy, sz);
-    g.translate(cx, cy, cz);
+  const pos = [], nrm = [], part = [], slot = [], vari = [], hair = [], uv = [], idx = [];
+  // r: bevel size (soft edges); face: map the pixel face onto the flat front of this box
+  const add = (cx, cy, cz, sx, sy, sz, p, s, v = 0, hs = 0, r = 0, face = false) => {
+    const b = bevelBox(new PolyBuf(), cx, cy, cz, sx, sy, sz, r);
     const base = pos.length / 3;
-    pos.push(...g.attributes.position.array);
-    nrm.push(...g.attributes.normal.array);
-    const n = g.attributes.position.count;
-    for (let i = 0; i < n; i++) { part.push(p); slot.push(s); vari.push(v); }
-    for (const i of g.index.array) idx.push(base + i);
+    const fw = sx / 2 - r, fh = sy / 2 - r;
+    for (let i = 0; i < b.count; i++) {
+      const x = b.pos[i * 3], y = b.pos[i * 3 + 1], z = b.pos[i * 3 + 2];
+      pos.push(x, y, z); nrm.push(b.nrm[i * 3], b.nrm[i * 3 + 1], b.nrm[i * 3 + 2]);
+      part.push(p); slot.push(s); vari.push(v); hair.push(hs);
+      const front = face && b.nrm[i * 3 + 2] > 0.99;
+      uv.push(front ? (x - cx + fw) / (2 * fw) : -1, front ? (y - cy + fh) / (2 * fh) : -1);
+    }
+    for (const i of b.idx) idx.push(base + i);
   };
-  // legs (pivot at hip y=0.92, x=±0.1)
-  for (const [p, x] of [[3, 0.1], [4, -0.1]]) {
-    add(x, 0.52, 0, 0.15, 0.8, 0.17, p, 1);
-    add(x, 0.05, 0.04, 0.16, 0.1, 0.27, p, 4);
+  // short legs (pivot at the hip) and big shoes
+  for (const [p, x] of [[3, HIP_X], [4, -HIP_X]]) {
+    add(x, 0.34, 0, 0.17, 0.52, 0.19, p, 1, 0, 0, 0.05);
+    add(x, 0.065, 0.04, 0.2, 0.13, 0.3, p, 4, 0, 0, 0.05);
   }
-  add(0, 0.97, 0, 0.36, 0.16, 0.22, 0, 1);              // pelvis
-  add(0, 1.27, 0, 0.42, 0.5, 0.24, 0, 0);               // torso
-  add(0, 1.55, 0, 0.14, 0.08, 0.14, 0, 2);              // neck
-  add(0, 1.71, 0.01, 0.22, 0.26, 0.24, 0, 2);           // head
-  add(0, 1.86, -0.02, 0.235, 0.07, 0.25, 0, 3, 6);      // hair top
-  add(0, 1.75, -0.11, 0.235, 0.18, 0.04, 0, 3, 6);      // hair back
-  add(0, 1.62, 0.12, 0.2, 0.09, 0.04, 0, 3, 7);         // beard
-  add(0, 1.88, 0, 0.245, 0.08, 0.245, 0, 6, 1);         // doppi (black)
-  for (const [x, z, sx, sz] of [[0, 0.124, 0.06, 0.005], [0, -0.124, 0.06, 0.005], [0.124, 0, 0.005, 0.06], [-0.124, 0, 0.005, 0.06]])
-    add(x, 1.885, z, sx || 0.006, 0.035, sz || 0.006, 0, 7, 1); // doppi motifs
-  add(0, 1.88, 0, 0.26, 0.07, 0.27, 0, 5, 2);           // police cap
-  add(0, 1.85, 0.16, 0.22, 0.02, 0.1, 0, 6, 2);         // cap visor
-  add(0, 1.78, -0.02, 0.26, 0.24, 0.28, 0, 5, 3);       // headscarf
-  add(0, 1.58, -0.1, 0.24, 0.22, 0.06, 0, 5, 3);        // scarf tail
-  add(0, 0.72, 0, 0.44, 0.62, 0.3, 0, 5, 4);            // dress
-  add(0, 1.0, -0.13, 0.4, 0.5, 0.05, 0, 0, 8);          // coat tails
-  // arms (pivot at shoulder y=1.48, x=±0.27)
-  for (const [p, x] of [[1, 0.27], [2, -0.27]]) {
-    add(x, 1.32, 0, 0.12, 0.34, 0.13, p, 0);
-    add(x, 1.0, 0, 0.11, 0.32, 0.12, p, 2);
+  add(0, 0.63, 0, 0.4, 0.14, 0.27, 0, 1, 0, 0, 0.05);             // pelvis
+  add(0, 0.93, 0, 0.48, 0.66, 0.34, 0, 0, 0, 0, 0.12);            // round tummy
+  add(0, 0.56, 0, 0.54, 0.52, 0.4, 0, 5, 4, 0, 0.11);             // dress
+  add(0, 0.76, -0.18, 0.44, 0.34, 0.06, 0, 0, 8, 0, 0.02);        // jacket tails
+  // arms (pivot at the shoulder) with small hands
+  for (const [p, x] of [[1, SHOULDER_X], [2, -SHOULDER_X]]) {
+    add(x, 1.02, 0, 0.13, 0.28, 0.15, p, 0, 0, 0, 0.045);
+    add(x, 0.82, 0, 0.12, 0.12, 0.12, p, 2, 0, 0, 0.035);
   }
-  add(-0.27, 0.86, 0.08, 0.06, 0.12, 0.22, 2, 8, 5);    // pistol in right hand
+  add(-SHOULDER_X, 0.78, 0.09, 0.06, 0.1, 0.22, 2, 8, 5);         // pistol in the right hand
+  // big head with the pixel face
+  add(0, HEAD.y, 0, HEAD.w, HEAD.h, HEAD.d, 0, 2, 0, 0, HEAD.r, true);
+  add(0, 1.31, 0.235, 0.34, 0.1, 0.05, 0, 3, 7, 0, 0.02);         // little beard on the chin
+  // hair styles
+  for (const hs of [HAIR_STYLE.SHORT, HAIR_STYLE.BUN, HAIR_STYLE.PONYTAIL]) {
+    add(0, 1.74, -0.02, 0.55, 0.15, 0.53, 0, 3, 6, hs, 0.06);     // top
+    add(0, 1.54, -0.22, 0.55, 0.42, 0.08, 0, 3, 6, hs, 0.03);     // back
+    add(0, 1.72, 0.24, 0.52, 0.09, 0.05, 0, 3, 6, hs, 0.02);      // fringe
+  }
+  add(0, 1.88, -0.1, 0.2, 0.17, 0.2, 0, 3, 6, HAIR_STYLE.BUN, 0.06);
+  add(0, 1.46, -0.3, 0.13, 0.36, 0.1, 0, 3, 6, HAIR_STYLE.PONYTAIL, 0.04);
+  add(0, 1.76, -0.02, 0.6, 0.22, 0.57, 0, 3, 6, HAIR_STYLE.CURLY, 0.11);
+  add(0, 1.56, -0.23, 0.57, 0.38, 0.1, 0, 3, 6, HAIR_STYLE.CURLY, 0.05);
+  for (const x of [-0.16, 0, 0.16]) add(x, 1.71, 0.25, 0.15, 0.1, 0.06, 0, 3, 6, HAIR_STYLE.CURLY, 0.03);
+  // doppi (black with white motifs) sitting on top of the head
+  add(0, 1.81, -0.01, 0.48, 0.1, 0.48, 0, 6, 1, 0, 0.02);
+  for (const [x, z, sx, sz] of [[0, 0.242, 0.09, 0.006], [0, -0.242, 0.09, 0.006], [0.242, 0, 0.006, 0.09], [-0.242, 0, 0.006, 0.09]]) add(x, 1.81, z, sx, 0.05, sz, 0, 7, 1);
+  // police cap with visor and badge
+  add(0, 1.8, -0.01, 0.56, 0.14, 0.56, 0, 5, 2, 0, 0.03);
+  add(0, 1.75, 0.31, 0.44, 0.035, 0.14, 0, 6, 2);
+  add(0, 1.81, 0.285, 0.09, 0.07, 0.01, 0, 9, 2);
+  // headscarf framing the face
+  add(0, 1.56, -0.03, 0.58, 0.5, 0.53, 0, 5, 3, 0, 0.11);
+  add(0, 1.77, 0.21, 0.54, 0.09, 0.08, 0, 5, 3, 0, 0.03);
+  add(0, 1.32, -0.23, 0.34, 0.22, 0.06, 0, 5, 3, 0, 0.02);
+  // packed to stay well under the 16 vertex attributes WebGL guarantees (the instance matrix takes 4)
+  const info = new Float32Array(part.length * 4);
+  for (let i = 0; i < part.length; i++) { info[i * 4] = part[i]; info[i * 4 + 1] = slot[i]; info[i * 4 + 2] = vari[i]; info[i * 4 + 3] = hair[i]; }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  g.setAttribute('aPart', new THREE.Float32BufferAttribute(part, 1));
-  g.setAttribute('aSlot', new THREE.Float32BufferAttribute(slot, 1));
-  g.setAttribute('aVar', new THREE.Float32BufferAttribute(vari, 1));
+  g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4));
+  g.setAttribute('aUV', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeBoundingSphere();
   return g;
 }
 
 const HUMAN_VERT_PARS = /* glsl */ `
-attribute float aPart; attribute float aSlot; attribute float aVar;
-attribute vec3 iColA; attribute vec3 iColB; attribute vec3 iColC; attribute vec3 iColD; attribute vec4 iAnim;
-varying vec3 vHumanColor;
+attribute vec4 aInfo; attribute vec2 aUV; // aInfo = (part, slot, variant, hair style)
+attribute vec3 iColA; attribute vec3 iColB; attribute vec3 iColC; attribute vec3 iColD; attribute vec4 iAnim; // iAnim.w = bits + face * 256 + hair * 2048
+varying vec3 vHumanColor; varying vec2 vFaceUV; varying float vFace;
+#define aPart aInfo.x
+#define aSlot aInfo.y
+#define aVar aInfo.z
+#define aHair aInfo.w
 mat3 hRotX(float a) { float c = cos(a), s = sin(a); return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c); }
 mat3 hRotZ(float a) { float c = cos(a), s = sin(a); return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0); }
 `;
 const HUMAN_ANIM = /* glsl */ `
   mat3 hR = mat3(1.0); vec3 hPivot = vec3(0.0); float hVis = 1.0;
+  float hBob = 0.0; mat3 hRoll = mat3(1.0);
+  float hFace = mod(floor(iAnim.w / 256.0), 8.0), hHair = floor(iAnim.w / 2048.0);
   {
-    float phase = iAnim.x, amp = iAnim.y, pose = iAnim.z, bits = iAnim.w;
+    float phase = iAnim.x, amp = iAnim.y, pose = iAnim.z, bits = mod(iAnim.w, 256.0);
     float var = aVar;
-    // variant visibility: 1 doppi,2 cap,3 scarf,4 dress,5 gun,6 hair,7 beard,8 coat
+    // variant visibility: 1 doppi,2 cap,3 scarf,4 dress,5 gun,6 hair,7 beard,8 coat; hair also needs its style
     if (var > 0.5) {
-      float bit = exp2(var - 1.0);
-      if (var > 5.5 && var < 6.5) hVis = 1.0 - mod(floor(bits / 4.0), 2.0) * 1.0; // hair hidden by scarf
-      if (var > 5.5 && var < 6.5) hVis *= mod(floor(bits / 32.0), 2.0);
-      else hVis = mod(floor(bits / bit), 2.0);
+      hVis = mod(floor(bits / exp2(var - 1.0)), 2.0);
+      if (var > 5.5 && var < 6.5) hVis *= (1.0 - mod(floor(bits / 4.0), 2.0)) * step(abs(aHair - hHair), 0.5);
     }
     float sw = sin(phase) * amp;
     float swB = sin(phase * 2.0) * amp;
-    if (aPart > 0.5 && aPart < 1.5) { hPivot = vec3(0.27, 1.48, 0.0); float a = -sw * 0.85;
+    // cute walk: a little hop on every step, a soft waddle and only a tiny arm swing
+    hBob = abs(sin(phase)) * amp * 0.07;
+    hRoll = hRotZ(sin(phase) * amp * 0.06);
+    if (aPart > 0.5 && aPart < 1.5) { hPivot = vec3(${SHOULDER_X}, ${SHOULDER_Y}, 0.0); float a = -sw * 0.5;
       if (pose > 1.5 && pose < 2.5) a = -2.9; else if (pose > 3.5 && pose < 4.5) a = -2.4 + swB * 0.6; else if (pose > 4.5) a = -0.9;
       hR = hRotX(a) * hRotZ(pose > 1.5 && pose < 2.5 ? -0.25 : (pose > 0.5 && pose < 1.5 ? -0.1 : 0.0)); }
-    else if (aPart > 1.5 && aPart < 2.5) { hPivot = vec3(-0.27, 1.48, 0.0); float a = sw * 0.85;
+    else if (aPart > 1.5 && aPart < 2.5) { hPivot = vec3(-${SHOULDER_X}, ${SHOULDER_Y}, 0.0); float a = sw * 0.5;
       if (pose > 0.5 && pose < 1.5) a = -1.5; else if (pose > 1.5 && pose < 2.5) a = -2.9; else if (pose > 2.5 && pose < 3.5) a = -1.55 * amp; else if (pose > 3.5 && pose < 4.5) a = -2.4 - swB * 0.6; else if (pose > 4.5) a = -0.9;
       hR = hRotX(a) * hRotZ(pose > 1.5 && pose < 2.5 ? 0.25 : 0.0); }
-    else if (aPart > 2.5 && aPart < 3.5) { hPivot = vec3(0.1, 0.92, 0.0); hR = hRotX(pose > 4.5 ? -1.4 : sw); }
-    else if (aPart > 3.5) { hPivot = vec3(-0.1, 0.92, 0.0); hR = hRotX(pose > 4.5 ? -1.4 : -sw); }
+    else if (aPart > 2.5 && aPart < 3.5) { hPivot = vec3(${HIP_X}, ${HIP_Y}, 0.0); hR = hRotX(pose > 4.5 ? -1.4 : sw); }
+    else if (aPart > 3.5) { hPivot = vec3(-${HIP_X}, ${HIP_Y}, 0.0); hR = hRotX(pose > 4.5 ? -1.4 : -sw); }
   }
 `;
 const HUMAN_COLOR = /* glsl */ `
@@ -104,23 +169,32 @@ const HUMAN_COLOR = /* glsl */ `
     vec3 c = iColA;
     if (s > 0.5 && s < 1.5) c = iColB; else if (s > 1.5 && s < 2.5) c = iColC; else if (s > 2.5 && s < 3.5) c = mix(vec3(0.04, 0.018, 0.04), vec3(0.2, 0.08, 0.05), iColD.r * 0.5);
     else if (s > 3.5 && s < 4.5) c = vec3(0.06, 0.03, 0.09); else if (s > 4.5 && s < 5.5) c = iColD; else if (s > 5.5 && s < 6.5) c = vec3(0.024, 0.012, 0.042);
-    else if (s > 6.5 && s < 7.5) c = vec3(1.0); else if (s > 7.5) c = vec3(0.06, 0.03, 0.09);
+    else if (s > 6.5 && s < 7.5) c = vec3(1.0); else if (s > 7.5 && s < 8.5) c = vec3(0.06, 0.03, 0.09); else if (s > 8.5) c = vec3(0.9, 0.47, 0.02);
     vHumanColor = c;
+    vFaceUV = aUV;
+    vFace = hFace;
   }
 `;
 
 function makeHumanMaterial() {
   const mat = toon({ color: 0xffffff });
+  const faces = faceTexture();
   mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uFaces = { value: faces };
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\n' + HUMAN_VERT_PARS)
-      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n' + HUMAN_ANIM + '\nobjectNormal = hR * objectNormal;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = hPivot + hR * (transformed - hPivot);\nif (hVis < 0.5) transformed = vec3(0.0, 1.2, 0.0);\n' + HUMAN_COLOR);
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n' + HUMAN_ANIM + '\nobjectNormal = hRoll * (hR * objectNormal);')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = hRoll * (hPivot + hR * (transformed - hPivot));\ntransformed.y += hBob;\nif (hVis < 0.5) transformed = vec3(0.0, 1.2, 0.0);\n' + HUMAN_COLOR);
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vHumanColor;')
-      .replace('#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb *= vHumanColor;');
+      .replace('#include <common>', `#include <common>\nvarying vec3 vHumanColor; varying vec2 vFaceUV; varying float vFace;\nuniform sampler2D uFaces;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        diffuseColor.rgb *= vHumanColor;
+        if (vFaceUV.x >= 0.0) {
+          vec4 f = texture2D(uFaces, vec2((clamp(vFaceUV.x, 0.0, 0.999) + floor(vFace + 0.5)) / ${FACES.length}.0, clamp(vFaceUV.y, 0.0, 0.999)));
+          diffuseColor.rgb = mix(diffuseColor.rgb, f.rgb, f.a);
+        }`);
   };
-  mat.customProgramCacheKey = () => 'human';
+  mat.customProgramCacheKey = () => 'human-chibi';
   return mat;
 }
 
@@ -140,6 +214,7 @@ export function randomLook(kind = 'ped') {
   }
   if (kind === 'gang') {
     look.shirt = PAL.ink; look.pants = PAL.plum; look.extra = PAL.ink; look.bits = VAR.HAIR | VAR.GUN | VAR.COAT | (chance(0.4) ? VAR.BEARD : 0);
+    look.gang = true; // the Qora Ko'zoynak ("black glasses") gang wear shades
     return look;
   }
   if (chance(0.45)) {
@@ -187,6 +262,19 @@ export class Human {
   }
 }
 
+// face and hair style per look, from a separate seeded stream so the game's own random draws stay
+// exactly as before: the player smiles, police look stern, the gang wear shades
+const styleRng = mulberry32(5150);
+function lookStyle(h) {
+  const L = h.look;
+  if (L._face === undefined) {
+    const a = styleRng(), b = styleRng();
+    L._face = h.isPlayer ? FACE.HAPPY : (L.bits & VAR.CAP) || h.kind === 'cop' ? FACE.STERN : L.gang || h.kind === 'enemy' ? FACE.SHADES : Math.floor(a * 3);
+    L._hair = h.isPlayer ? HAIR_STYLE.SHORT : L.female ? [HAIR_STYLE.BUN, HAIR_STYLE.PONYTAIL, HAIR_STYLE.SHORT][Math.floor(b * 3)] : b < 0.7 ? HAIR_STYLE.SHORT : HAIR_STYLE.CURLY;
+  }
+  return L;
+}
+
 const MAX_HUMANS = 260;
 export class HumanRenderer {
   constructor(scene) {
@@ -226,7 +314,7 @@ export class HumanRenderer {
   push(h) {
     if (this.n >= MAX_HUMANS || !h.visible || h.inVehicle) return;
     const i = this.n++;
-    const L = h.look;
+    const L = lookStyle(h);
     const put = (attr, hex) => { this.c.set(hex); attr.array[i * 3] = this.c.r; attr.array[i * 3 + 1] = this.c.g; attr.array[i * 3 + 2] = this.c.b; };
     put(this.attrs.iColA, cuteCloth(L.shirt));
     put(this.attrs.iColB, cuteCloth(L.pants));
@@ -236,7 +324,7 @@ export class HumanRenderer {
     let bits = L.bits;
     if (h.showGun === false) bits &= ~VAR.GUN;
     if (h.showGun === true) bits |= VAR.GUN;
-    an[i * 4] = h.animPhase; an[i * 4 + 1] = h.lie > 0.5 ? 0 : h.animAmp; an[i * 4 + 2] = h.pose; an[i * 4 + 3] = bits;
+    an[i * 4] = h.animPhase; an[i * 4 + 1] = h.lie > 0.5 ? 0 : h.animAmp; an[i * 4 + 2] = h.pose; an[i * 4 + 3] = (bits & 255) + L._face * 256 + L._hair * 2048;
     // lying down: rotate around X so the body lies along the ground
     this.e.set(-Math.PI / 2 * h.lie, h.heading + h.spin, 0, 'YXZ');
     this.q.setFromEuler(this.e);

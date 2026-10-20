@@ -11,7 +11,10 @@ export const WEAPONS = {
 };
 export const WEAPON_ORDER = ['fist', 'pistol', 'smg', 'shotgun', 'ak'];
 
-const SPHERES = [[0.5, 0.26, 1], [1.12, 0.3, 1], [1.45, 0.24, 1], [1.7, 0.16, 2.6]]; // [height, radius, damage multiplier]
+// [height, radius, damage multiplier]. The head sphere matches the big chibi head (1.26-1.78 m plus
+// hair); the old upper-chest sphere at 1.45 m was dropped because it now sat inside the head and
+// would have turned face shots into body shots
+const SPHERES = [[0.5, 0.26, 1], [1.12, 0.3, 1], [1.52, 0.27, 2.6]];
 
 function raySphere(ox, oy, oz, dx, dy, dz, cx, cy, cz, r) {
   const fx = ox - cx, fy = oy - cy, fz = oz - cz;

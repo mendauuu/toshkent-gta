@@ -1,14 +1,17 @@
 // Builds the static city from OpenStreetMap data: ground layers, roads, markings, buildings,
 // trees and street furniture, grouped in chunks for distance culling.
 import * as THREE from 'three';
-import { FloatBuf, IndexBuf, ringArea, ringCentroid, mulberry32 } from '../util/math.js';
+import { FloatBuf, IndexBuf, ringArea, ringCentroid, mulberry32, pointInRing } from '../util/math.js';
+import { PolyBuf, bevelBox, prism } from '../util/shapes.js';
 import {
   makeGroundMaterial, makeMarkingMaterial, makeWaterMaterial, makeBuildingMaterial, makeFoliageMaterial, sharedUniforms, toon, hideBeyond,
 } from './materials.js';
 import { PAL, wallColor, roofColor } from './palette.js';
 
 export const CHUNK = 300;
-const STYLE_PARAMS = [null, { bay: 3.6, floor: 3.0 }, { bay: 3.0, floor: 2.9 }, { bay: 1.6, floor: 3.6 }, { bay: 3.2, floor: 3.6 }, { bay: 6.0, floor: 6.5 }];
+// window bay / floor sizes per facade style: 1 house, 2 Soviet block, 3 glass, 4 office/civic,
+// 5 industrial, 6 monument (big plain buildings: mosques, halls)
+const STYLE_PARAMS = [null, { bay: 3.6, floor: 3.0 }, { bay: 3.0, floor: 2.9 }, { bay: 1.6, floor: 3.6 }, { bay: 3.2, floor: 3.6 }, { bay: 6.0, floor: 6.5 }, { bay: 4.2, floor: 5.0 }];
 export const ORDER = { ground: -30, green: -29, plaza: -28, water: -27, rail: -26, sidewalk: -25, path: -24, road: -23, marking: -22, decal: -21, shadow: -20 };
 // palette colours (see palette.js): road classes 0-4, green kinds, plaza kinds
 const ROAD_COLORS = [PAL.slate, PAL.slate, 0x67658f, PAL.cream, PAL.apricotLt];
@@ -51,25 +54,34 @@ class FlatBuilder {
   }
 }
 
+// buildings: aWin = (u in window bays, v in floors, floors); aStyle = (style, seed, wall info =
+// kind + 4 * bays). Styles 1-6 are facades (see materials.js), 10 = tiled dome, 11 = pitched roof.
 class SolidBuilder {
   constructor() {
     this.pos = new FloatBuf(8192); this.nrm = new FloatBuf(8192); this.col = new FloatBuf(8192);
-    this.win = new FloatBuf(8192); this.sty = new FloatBuf(4096); this.idx = new IndexBuf(8192); this.vc = 0;
+    this.win = new FloatBuf(8192); this.sty = new FloatBuf(8192); this.idx = new IndexBuf(8192); this.vc = 0;
   }
-  vert(x, y, z, nx, ny, nz, c, wu = 0, wv = 0, wf = 0, st = 0, seed = 0, shade = 1) {
-    this.pos.push3(x, y, z); this.nrm.push3(nx, ny, nz); this.col.push3(c.r * shade, c.g * shade, c.b * shade);
-    this.win.push3(wu, wv, wf); this.sty.push2(st, seed);
+  vert(x, y, z, nx, ny, nz, c, wu = 0, wv = 0, wf = 0, st = 0, seed = 0, info = 0) {
+    this.pos.push3(x, y, z); this.nrm.push3(nx, ny, nz); this.col.push3(c.r, c.g, c.b);
+    this.win.push3(wu, wv, wf); this.sty.push3(st, seed, info);
     return this.vc++;
   }
-  // triangle with flat normal oriented along hint
-  tri(a, b, c, color, hx, hy, hz) {
+  // triangle with flat normal oriented along hint; on pitched roofs (st 11) v counts tile rows
+  tri(a, b, c, color, hx, hy, hz, st = 0) {
     let ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
     const l = Math.hypot(nx, ny, nz) || 1;
     nx /= l; ny /= l; nz /= l;
     if (nx * hx + ny * hy + nz * hz < 0) { const t = b; b = c; c = t; nx = -nx; ny = -ny; nz = -nz; }
-    const i = this.vert(a[0], a[1], a[2], nx, ny, nz, color), j = this.vert(b[0], b[1], b[2], nx, ny, nz, color), k = this.vert(c[0], c[1], c[2], nx, ny, nz, color);
+    const V = (p) => this.vert(p[0], p[1], p[2], nx, ny, nz, color, 0, p[1] / 0.42, 0, st);
+    const i = V(a), j = V(b), k = V(c);
     this.idx.push3(i, j, k);
+  }
+  // flat-shaded polygons from util/shapes.js (roof props) in one plain colour
+  poly(P, color) {
+    const base = this.vc;
+    for (let i = 0; i < P.count; i++) this.vert(P.pos[i * 3], P.pos[i * 3 + 1], P.pos[i * 3 + 2], P.nrm[i * 3], P.nrm[i * 3 + 1], P.nrm[i * 3 + 2], color);
+    for (let i = 0; i < P.idx.length; i += 3) this.idx.push3(base + P.idx[i], base + P.idx[i + 1], base + P.idx[i + 2]);
   }
   get empty() { return this.idx.n === 0; }
   geometry() {
@@ -78,11 +90,23 @@ class SolidBuilder {
     g.setAttribute('normal', new THREE.BufferAttribute(this.nrm.array(), 3));
     g.setAttribute('color', new THREE.BufferAttribute(this.col.array(), 3));
     g.setAttribute('aWin', new THREE.BufferAttribute(this.win.array(), 3));
-    g.setAttribute('aStyle', new THREE.BufferAttribute(this.sty.array(), 2));
+    g.setAttribute('aStyle', new THREE.BufferAttribute(this.sty.array(), 3));
     g.setIndex(new THREE.BufferAttribute(this.idx.array(), 1));
     g.computeBoundingSphere();
     return g;
   }
+}
+
+// move a PolyBuf: rotate about x (tilt) then y (turn), then translate
+function placePoly(P, x, y, z, turn = 0, tilt = 0) {
+  const ct = Math.cos(tilt), stl = Math.sin(tilt), cy = Math.cos(turn), sy = Math.sin(turn);
+  const rot = (a, i) => {
+    let px = a[i], py = a[i + 1], pz = a[i + 2];
+    const y1 = py * ct - pz * stl, z1 = py * stl + pz * ct;
+    a[i] = px * cy + z1 * sy; a[i + 1] = y1; a[i + 2] = -px * sy + z1 * cy;
+  };
+  for (let i = 0; i < P.pos.length; i += 3) { rot(P.pos, i); rot(P.nrm, i); P.pos[i] += x; P.pos[i + 1] += y; P.pos[i + 2] += z; }
+  return P;
 }
 
 // triangulate a polygon (flat ring + holes) -> {verts:[x,z,...], tris:[i,j,k,...]}
@@ -163,6 +187,8 @@ class Chunk {
     this.layers = {}; // name -> FlatBuilder
     this.solid = null; // SolidBuilder
     this.trees = []; // [x, z, s, type]
+    this.yard = []; // courtyard tree crowns over mahalla roofs: [x, z, y, s]
+    this.props = null; // roof props (SolidBuilder), hidden in the distance
     this.lamps = []; // [x, z, heading]
     this.group = new THREE.Group();
     this.group.matrixAutoUpdate = false;
@@ -173,6 +199,7 @@ class Chunk {
   }
   layer(name, dash = false) { return this.layers[name] || (this.layers[name] = new FlatBuilder(dash)); }
   solidB() { return this.solid || (this.solid = new SolidBuilder()); }
+  propsB() { return this.props || (this.props = new SolidBuilder()); }
 }
 
 export class City {
@@ -404,13 +431,26 @@ export class City {
   }
 
   addBuilding(B, b, seedIdx, cx, cz) {
-    const sp = STYLE_PARAMS[b.style];
+    const area = Math.abs(ringArea(b.ring));
+    let st = b.style;
+    if (st === 0 && area > 350 && b.h > 6) st = 6; // big plain buildings (mosques, halls): arches and tile bands
+    const sp = STYLE_PARAMS[st];
     const h = b.h, y0 = b.minH;
     const seed = (seedIdx * 0.6180339) % 1 * 50;
+    const r01 = (k) => ((Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1; // seeded per-building randoms
     const wall = col(wallColor(b.color, seed));
     const roofC = col(roofColor(b.roofColor, seed + 0.37, b.roof));
     const floors = sp ? Math.max(1, Math.floor((h - 0.4) / sp.floor)) : 0;
     const rings = [b.ring, ...b.holes];
+    // the longest side, to spot the short end walls of panel blocks (murals) and to turn roof props
+    let longest = 0, axis = 0;
+    for (let i = 0, m = b.ring.length / 2; i < m; i++) {
+      const j = (i + 1) % m, dx = b.ring[j * 2] - b.ring[i * 2], dz = b.ring[j * 2 + 1] - b.ring[i * 2 + 1], l = Math.hypot(dx, dz);
+      if (l > longest) { longest = l; axis = Math.atan2(dx, dz); }
+    }
+    const shops = (st === 2 || st === 4) && floors >= 2 && r01(1) < 0.75;
+    const murals = st === 2 && floors >= 4 && longest > 22 && r01(2) < 0.7;
+    let streetN = null;
     for (const r of rings) {
       const m = r.length / 2;
       for (let i = 0; i < m; i++) {
@@ -419,18 +459,27 @@ export class City {
         const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz);
         if (len < 0.05) continue;
         const nx = dz / len, nz = -dx / len;
-        const nWin = sp ? Math.round(len / sp.bay) : 0;
+        const nWin = sp ? Math.max(1, Math.round(len / sp.bay)) : 0;
         const fl = sp ? sp.floor : 1;
-        const st = sp ? b.style : 0;
-        const v0 = B.vert(ax, y0, az, nx, 0, nz, wall, 0, y0 / fl, floors, st, seed);
-        const v1 = B.vert(bx, y0, bz, nx, 0, nz, wall, nWin, y0 / fl, floors, st, seed);
-        const v2 = B.vert(bx, h, bz, nx, 0, nz, wall, nWin, h / fl, floors, st, seed);
-        const v3 = B.vert(ax, h, az, nx, 0, nz, wall, 0, h / fl, floors, st, seed);
+        // wall kinds: 0 plain facade, 1 shops on the ground floor, 2 mosaic mural, 3 mahalla gate wall
+        let kind = 0;
+        if (sp && r === b.ring && y0 < 0.5 && len > 2.5) {
+          if ((st === 1 || shops) && this.facesStreet((ax + bx) / 2, (az + bz) / 2, nx, nz)) { kind = st === 1 ? 3 : 1; streetN = streetN || [nx, nz]; }
+          else if (murals && len >= 7 && len < longest * 0.5) kind = 2;
+        }
+        const info = sp ? kind + 4 * nWin : 0;
+        const s = sp ? st : 0;
+        // seen from outside, a -> b runs right to left: u counts the other way so signs read correctly
+        const v0 = B.vert(ax, y0, az, nx, 0, nz, wall, nWin, y0 / fl, floors, s, seed, info);
+        const v1 = B.vert(bx, y0, bz, nx, 0, nz, wall, 0, y0 / fl, floors, s, seed, info);
+        const v2 = B.vert(bx, h, bz, nx, 0, nz, wall, 0, h / fl, floors, s, seed, info);
+        const v3 = B.vert(ax, h, az, nx, 0, nz, wall, nWin, h / fl, floors, s, seed, info);
         B.idx.push3(v0, v2, v1);
         B.idx.push3(v0, v3, v2);
       }
     }
     // roof
+    const under = wall.clone().multiplyScalar(0.7);
     const flat = () => {
       const t = triangulate(b.ring, b.holes);
       if (!t) return;
@@ -444,7 +493,7 @@ export class City {
       }
       if (y0 > 0.2) {
         const base2 = B.vc;
-        for (const p of t.pts) B.vert(p.x, y0, p.y, 0, -1, 0, wall, 0, 0, 0, 0, 0, 0.7);
+        for (const p of t.pts) B.vert(p.x, y0, p.y, 0, -1, 0, under);
         for (const f of t.faces) {
           const a = base2 + f[0], c1 = base2 + f[1], c2 = base2 + f[2];
           const p = B.pos.a;
@@ -468,56 +517,115 @@ export class City {
       const R0 = [m03[0] + ux * inset, ry, m03[1] + uz * inset], R1 = [m12[0] - ux * inset, ry, m12[1] - uz * inset];
       const P = q.map((p) => [p[0], h, p[1]]);
       const out = (pts) => { let x = 0, z = 0; for (const p of pts) { x += p[0]; z += p[2]; } x /= pts.length; z /= pts.length; const dx = x - cx, dz = z - cz, l = Math.hypot(dx, dz) || 1; return [dx / l, dz / l]; };
-      const slope = (a, b2, c2, d) => { const [ox, oz] = out([a, b2, c2, d]); B.tri(a, b2, c2, roofC, ox, 1.2, oz); B.tri(a, c2, d, roofC, ox, 1.2, oz); };
+      const slope = (a, b2, c2, d) => { const [ox, oz] = out([a, b2, c2, d]); B.tri(a, b2, c2, roofC, ox, 1.2, oz, 11); B.tri(a, c2, d, roofC, ox, 1.2, oz, 11); };
       slope(P[0], P[1], R1, R0);
       slope(P[2], P[3], R0, R1);
       if (b.roof === 1) {
-        let [ox, oz] = out([P[1], P[2], R1]); B.tri(P[1], P[2], R1, roofC, ox, 1.2, oz);
-        [ox, oz] = out([P[3], P[0], R0]); B.tri(P[3], P[0], R0, roofC, ox, 1.2, oz);
+        let [ox, oz] = out([P[1], P[2], R1]); B.tri(P[1], P[2], R1, roofC, ox, 1.2, oz, 11);
+        [ox, oz] = out([P[3], P[0], R0]); B.tri(P[3], P[0], R0, roofC, ox, 1.2, oz, 11);
       } else {
         let [ox, oz] = out([P[1], P[2], R1]); B.tri(P[1], P[2], R1, wall, ox, 0, oz);
         [ox, oz] = out([P[3], P[0], R0]); B.tri(P[3], P[0], R0, wall, ox, 0, oz);
       }
       if (y0 > 0.2) flat();
-      return;
-    }
-    flat();
-    if (b.roof === 3 && rh > 0.2) {
-      const area = Math.abs(ringArea(ring));
-      const R = Math.sqrt(area / Math.PI) * 0.92;
-      const rings = 7, seg = 18;
-      const base = B.vc;
-      for (let i = 0; i <= rings; i++) {
-        const th = (i / rings) * Math.PI / 2;
-        const rr = R * Math.cos(th), y = h + rh * Math.sin(th);
-        for (let k = 0; k <= seg; k++) {
-          const a = (k / seg) * Math.PI * 2;
-          const x = cx + Math.cos(a) * rr, z = cz + Math.sin(a) * rr;
-          let nx = (x - cx) / (R * R), ny = (y - h) / (rh * rh), nz = (z - cz) / (R * R);
-          const l = Math.hypot(nx, ny, nz) || 1;
-          B.vert(x, y, z, nx / l, ny / l, nz / l, roofC);
+    } else {
+      flat();
+      if (b.roof === 3 && rh > 0.2) {
+        // dome in blue tiles (the tile cells run 12 around and 4 up)
+        const R = Math.sqrt(area / Math.PI) * 0.92;
+        const rings = 7, seg = 18;
+        const base = B.vc;
+        for (let i = 0; i <= rings; i++) {
+          const th = (i / rings) * Math.PI / 2;
+          const rr = R * Math.cos(th), y = h + rh * Math.sin(th);
+          for (let k = 0; k <= seg; k++) {
+            const a = (k / seg) * Math.PI * 2;
+            const x = cx + Math.cos(a) * rr, z = cz + Math.sin(a) * rr;
+            let nx = (x - cx) / (R * R), ny = (y - h) / (rh * rh), nz = (z - cz) / (R * R);
+            const l = Math.hypot(nx, ny, nz) || 1;
+            B.vert(x, y, z, nx / l, ny / l, nz / l, roofC, (k / seg) * 12, (i / rings) * 4, 0, 10, seed);
+          }
+        }
+        for (let i = 0; i < rings; i++) for (let k = 0; k < seg; k++) {
+          const a = base + i * (seg + 1) + k, b2 = a + seg + 1;
+          B.idx.push3(a, b2, a + 1);
+          B.idx.push3(a + 1, b2, b2 + 1);
+        }
+        // little golden finial
+        const gold = col(PAL.gold);
+        const tip = [cx, h + rh + Math.max(0.6, rh * 0.18), cz];
+        for (let k = 0; k < 4; k++) {
+          const a0 = (k / 4) * Math.PI * 2, a1 = ((k + 1) / 4) * Math.PI * 2, rr = Math.max(0.12, R * 0.04);
+          B.tri([cx + Math.cos(a0) * rr, h + rh - 0.05, cz + Math.sin(a0) * rr], [cx + Math.cos(a1) * rr, h + rh - 0.05, cz + Math.sin(a1) * rr], tip, gold, Math.cos(a0 + 0.78), 0.3, Math.sin(a0 + 0.78));
+        }
+      } else if ((b.roof === 4 || b.roof === 1 || b.roof === 2) && rh > 0.2) {
+        const apex = [cx, h + rh, cz];
+        for (let i = 0; i < n; i++) {
+          const j = (i + 1) % n;
+          const a = [ring[i * 2], h + 0.01, ring[i * 2 + 1]], c2 = [ring[j * 2], h + 0.01, ring[j * 2 + 1]];
+          const mx = (a[0] + c2[0]) / 2 - cx, mz = (a[2] + c2[2]) / 2 - cz, l = Math.hypot(mx, mz) || 1;
+          B.tri(a, c2, apex, roofC, mx / l, 1, mz / l, 11);
         }
       }
-      for (let i = 0; i < rings; i++) for (let k = 0; k < seg; k++) {
-        const a = base + i * (seg + 1) + k, b2 = a + seg + 1;
-        B.idx.push3(a, b2, a + 1);
-        B.idx.push3(a + 1, b2, b2 + 1);
+    }
+    this.roofProps(b, st, area, cx, cz, axis, wall, r01);
+    // a courtyard tree peeking over the roof of small mahalla houses, behind the street wall
+    if (st === 1 && h <= 7.5 && area > 50 && area < 260 && r01(4) < 0.3) {
+      let tx = cx, tz = cz;
+      if (streetN) { const d = Math.sqrt(area) * 0.25; if (pointInRing(cx - streetN[0] * d, cz - streetN[1] * d, b.ring)) { tx = cx - streetN[0] * d; tz = cz - streetN[1] * d; } }
+      this.chunkAt(cx, cz).yard.push(tx, tz, h + rh * 0.6 + 0.9, 0.8 + r01(5) * 0.4);
+    }
+  }
+
+  // does this wall look onto a street? (a road within a few metres in front of it)
+  facesStreet(mx, mz, nx, nz) {
+    return !!this.graph.nearest(mx + nx * 6, mz + nz * 6, 8, (e) => e.cls <= 2);
+  }
+
+  // water tanks, satellite dishes, AC boxes, antennas and stair rooms on flat roofs, chimneys on houses
+  roofProps(b, st, area, cx, cz, axis, wall, r01) {
+    const h = b.h, flatRoof = b.roof === 0 || b.roof === 5;
+    const props = this.chunkAt(cx, cz).propsB();
+    const spot = (k) => {
+      for (let t = 0; t < 6; t++) {
+        const a = r01(20 + k * 7 + t) * Math.PI * 2, d = Math.sqrt(r01(40 + k * 7 + t)) * Math.sqrt(area) * 0.3;
+        const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+        if (pointInRing(x, z, b.ring)) return [x, z];
       }
-      // little golden finial
-      const gold = col(PAL.gold);
-      const tip = [cx, h + rh + Math.max(0.6, rh * 0.18), cz];
-      for (let k = 0; k < 4; k++) {
-        const a0 = (k / 4) * Math.PI * 2, a1 = ((k + 1) / 4) * Math.PI * 2, rr = Math.max(0.12, R * 0.04);
-        B.tri([cx + Math.cos(a0) * rr, h + rh - 0.05, cz + Math.sin(a0) * rr], [cx + Math.cos(a1) * rr, h + rh - 0.05, cz + Math.sin(a1) * rr], tip, gold, Math.cos(a0 + 0.78), 0.3, Math.sin(a0 + 0.78));
+      return null;
+    };
+    const add = (P, x, y, z, color, turn = axis, tilt = 0) => props.poly(placePoly(P, x, y, z, turn, tilt), col(color));
+    if (flatRoof && (st === 2 || st === 4 || st === 6) && area > 120 && h >= 6) {
+      let p = spot(0);
+      if (p && r01(6) < 0.75) {
+        add(bevelBox(new PolyBuf(), 0, 1.3, 0, 2.8, 2.6, 2.6, 0.12), p[0], h, p[1], wall.getHex());
+        add(bevelBox(new PolyBuf(), 0, 0.95, 1.31, 0.9, 1.9, 0.04), p[0], h, p[1], PAL.brownDk);
       }
-    } else if ((b.roof === 4 || b.roof === 1 || b.roof === 2) && rh > 0.2) {
-      const apex = [cx, h + rh, cz];
-      for (let i = 0; i < n; i++) {
-        const j = (i + 1) % n;
-        const a = [ring[i * 2], h + 0.01, ring[i * 2 + 1]], c2 = [ring[j * 2], h + 0.01, ring[j * 2 + 1]];
-        const mx = (a[0] + c2[0]) / 2 - cx, mz = (a[2] + c2[2]) / 2 - cz, l = Math.hypot(mx, mz) || 1;
-        B.tri(a, c2, apex, roofC, mx / l, 1, mz / l);
+      p = spot(1);
+      if (p && r01(7) < 0.65) {
+        add(prism(new PolyBuf(), 0, 0.45, 0, 0.9, 0.8, 1.5, 8), p[0], h, p[1], [PAL.lilac, PAL.cloud, PAL.teal][Math.floor(r01(8) * 3)]);
+        add(bevelBox(new PolyBuf(), 0, 0.22, 0, 1.9, 0.44, 1.9), p[0], h, p[1], PAL.slate);
       }
+      for (let k = 0; k < 1 + Math.floor(r01(9) * 3); k++) {
+        p = spot(2 + k);
+        if (!p) continue;
+        add(bevelBox(new PolyBuf(), 0, 0, 0, 1.0, 1.0, 0.14, 0.05), p[0], h + 0.9, p[1], PAL.white, r01(10 + k) * 6.28, -0.75);
+        add(bevelBox(new PolyBuf(), 0, 0.35, 0, 0.14, 0.7, 0.14), p[0], h, p[1], PAL.lilac);
+      }
+      for (let k = 0; k < 2 + Math.floor(r01(14) * 3); k++) {
+        p = spot(6 + k);
+        if (!p) continue;
+        add(bevelBox(new PolyBuf(), 0, 0.3, 0, 0.9, 0.6, 0.7, 0.06), p[0], h, p[1], PAL.cloud);
+        add(bevelBox(new PolyBuf(), 0, 0.3, 0.36, 0.6, 0.4, 0.02), p[0], h, p[1], PAL.slateLt);
+      }
+      p = spot(12);
+      if (p && r01(15) < 0.35) {
+        add(bevelBox(new PolyBuf(), 0, 1.3, 0, 0.2, 2.6, 0.2), p[0], h, p[1], PAL.plum);
+        for (const y of [2.0, 2.5]) add(bevelBox(new PolyBuf(), 0, y, 0, 1.5, 0.12, 0.12), p[0], h, p[1], PAL.plum);
+      }
+    } else if (st === 1 && !flatRoof && b.roofH > 0.5 && r01(16) < 0.35) {
+      const p = spot(13);
+      if (p) add(bevelBox(new PolyBuf(), 0, 0.65, 0, 0.5, 1.3, 0.5, 0.04), p[0], h + b.roofH * 0.55, p[1], r01(17) < 0.5 ? PAL.brownDk : PAL.lilac);
     }
   }
 
@@ -695,11 +803,24 @@ export class City {
       tex.magFilter = tex.minFilter = THREE.NearestFilter;
       tex.generateMipmaps = false;
       const signGeo = new THREE.BoxGeometry(1.1, 1.1, 0.2);
-      signGeo.translate(0, 3.1, 0);
-      const postGeo = new THREE.BoxGeometry(0.22, 2.7, 0.22);
-      postGeo.translate(0, 1.35, 0);
+      signGeo.translate(0, 4.95, 0);
+      // ornate pavilion over the stairs: four columns, a tiled canopy and a little turquoise dome
+      const pav = new SolidBuilder();
+      for (const [x, z] of [[-1.3, -1.3], [1.3, -1.3], [-1.3, 1.3], [1.3, 1.3]]) {
+        pav.poly(bevelBox(new PolyBuf(), x, 1.25, z, 0.32, 2.5, 0.32, 0.04), col(PAL.cream));
+        pav.poly(bevelBox(new PolyBuf(), x, 2.55, z, 0.46, 0.14, 0.46), col(PAL.teal));
+      }
+      pav.poly(bevelBox(new PolyBuf(), 0, 2.75, 0, 3.4, 0.3, 3.4, 0.06), col(PAL.white));
+      pav.poly(bevelBox(new PolyBuf(), 0, 3.02, 0, 3.2, 0.24, 3.2), col(PAL.navy));
+      pav.poly(prism(new PolyBuf(), 0, 3.14, 0, 1.2, 1.2, 0.3, 8), col(PAL.white));
+      pav.poly(prism(new PolyBuf(), 0, 3.44, 0, 1.2, 0.9, 0.36, 8), col(PAL.teal));
+      pav.poly(prism(new PolyBuf(), 0, 3.8, 0, 0.9, 0.5, 0.3, 8), col(PAL.teal));
+      pav.poly(prism(new PolyBuf(), 0, 4.1, 0, 0.5, 0.14, 0.24, 8), col(PAL.sky));
+      pav.poly(bevelBox(new PolyBuf(), 0, 4.37, 0, 0.12, 0.3, 0.12), col(PAL.gold));
       const signMesh = new THREE.InstancedMesh(signGeo, toon({ map: tex, emissive: 0x10306a, emissiveIntensity: 0.4 }), signs.length);
-      const postMesh = new THREE.InstancedMesh(postGeo, toon({ color: PAL.navy }), signs.length);
+      const postMesh = new THREE.InstancedMesh(pav.geometry(), toon({ vertexColors: true }), signs.length);
+      postMesh.castShadow = true;
+      postMesh.receiveShadow = true;
       const m = new THREE.Matrix4();
       signs.forEach((sg, i) => { m.makeRotationY((i * 1.3) % Math.PI); m.setPosition(sg.x, 0, sg.z); signMesh.setMatrixAt(i, m); postMesh.setMatrixAt(i, m); });
       this.scene.add(signMesh, postMesh);
@@ -710,19 +831,29 @@ export class City {
   // ------------------------------------------------------------------ meshes
   finishChunks() {
     const M = this.materials;
+    // ground layers that share the flat ground material are merged in draw order (triangles draw in
+    // buffer order, so the layering is the same as separate meshes): greens + plazas under the water,
+    // rails, sidewalks, paths and roads above it; markings last
     const layerDefs = [
-      ['green', M.green, ORDER.green], ['plaza', M.plaza, ORDER.plaza], ['water', M.water, ORDER.water],
-      ['rail', M.road, ORDER.rail], ['sidewalk', M.sidewalk, ORDER.sidewalk], ['path', M.sidewalk, ORDER.path],
-      ['road', M.road, ORDER.road], ['marking', M.marking, ORDER.marking],
+      [['green', 'plaza'], M.ground, ORDER.green], [['water'], M.water, ORDER.water],
+      [['rail', 'sidewalk', 'path', 'road'], M.ground, ORDER.road], [['marking'], M.marking, ORDER.marking],
     ];
-    // tree templates: round crowns with smooth normals (clean toon bands, no facet lines), chunky trunks
-    const trunkGeo = new THREE.CylinderGeometry(0.26, 0.36, 1, 6, 1, true);
+    // tree templates: puffy crowns of overlapping soft blobs (smooth normals give round toon bands,
+    // no facet lines), chunky trunks, two-tier cones
+    const trunkGeo = new THREE.CylinderGeometry(0.26, 0.36, 1, 5, 1, true);
     trunkGeo.translate(0, 0.5, 0);
-    const crownGeo = new THREE.IcosahedronGeometry(1, this.settings.quality === 'high' ? 1 : 0);
-    const cp = crownGeo.attributes.position, cn = crownGeo.attributes.normal;
-    for (let i = 0; i < cp.count; i++) { v3.set(cp.getX(i), cp.getY(i), cp.getZ(i)).normalize(); cn.setXYZ(i, v3.x, v3.y, v3.z); }
-    const coneGeo = new THREE.ConeGeometry(1, 1, 8, 1);
-    coneGeo.translate(0, 0.5, 0);
+    const detail = this.settings.quality === 'high' ? 1 : 0;
+    const puff = (blobs) => mergeGeos(blobs.map(([x, y, z, r]) => {
+      const g = new THREE.IcosahedronGeometry(1, detail);
+      const p = g.attributes.position, n = g.attributes.normal;
+      for (let i = 0; i < p.count; i++) { v3.set(p.getX(i), p.getY(i), p.getZ(i)).normalize(); n.setXYZ(i, v3.x, v3.y, v3.z); }
+      g.scale(r, r, r); g.translate(x, y, z);
+      return g;
+    }));
+    const crownGeo = puff([[0, 0, 0, 0.86], [0.5, 0.28, 0.22, 0.62], [-0.42, 0.34, -0.3, 0.6]]);
+    const poplarGeo = puff([[0, 0, 0, 1]]);
+    // [tier base, tier height, radius] in the unit cone the instances scale up
+    const coneGeo = mergeGeos([[0, 0.62, 1], [0.4, 0.6, 0.72]].map(([y, h, r]) => { const g = new THREE.ConeGeometry(r, h, 8, 1); g.translate(0, y + h / 2, 0); return g; }));
     const lampGeo = mergeBoxes([
       [0, 4.1, 0, 0.3, 8.2, 0.3, PAL.plum],
       [0, 8.1, 0.9, 0.2, 0.2, 1.8, PAL.plum],
@@ -743,16 +874,17 @@ export class City {
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     let tris = 0;
     for (const ch of this.chunkList) {
-      for (const [name, mat, order] of layerDefs) {
-        const B = ch.layers[name];
-        if (!B || B.empty) continue;
-        const mesh = new THREE.Mesh(B.geometry(), mat);
+      for (const [names, mat, order] of layerDefs) {
+        const list = names.map((n) => ch.layers[n]).filter((B) => B && !B.empty);
+        if (!list.length) continue;
+        const geo = list.length === 1 ? list[0].geometry() : mergeFlat(list);
+        const mesh = new THREE.Mesh(geo, mat);
         mesh.renderOrder = order;
         mesh.receiveShadow = true;
         mesh.matrixAutoUpdate = false;
         ch.group.add(mesh);
-        tris += B.idx.n / 3;
-        ch.layers[name] = null;
+        for (const B of list) tris += B.idx.n / 3;
+        for (const n of names) ch.layers[n] = null;
       }
       if (ch.solid && !ch.solid.empty) {
         const mesh = new THREE.Mesh(ch.solid.geometry(), M.building);
@@ -764,16 +896,44 @@ export class City {
         ch.buildingMesh = mesh;
         ch.solid = null;
       }
+      // roof props: one merged mesh per chunk, shown only nearby (see update)
+      if (ch.props && !ch.props.empty) {
+        const mesh = new THREE.Mesh(ch.props.geometry(), M.building);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        mesh.matrixAutoUpdate = false;
+        ch.group.add(mesh);
+        tris += ch.props.idx.n / 3;
+        ch.propMesh = mesh;
+        ch.props = null;
+      }
+      // courtyard trees peeking over mahalla roofs (crowns only: the trunks are behind the walls)
+      const Y = ch.yard, ny = Y.length / 4;
+      if (ny) {
+        const yards = new THREE.InstancedMesh(crownGeo, M.foliage, ny);
+        for (let i = 0; i < ny; i++) {
+          const s = Y[i * 4 + 3];
+          q.setFromAxisAngle(up, rnd() * 6.28);
+          m4.compose(v.set(Y[i * 4], Y[i * 4 + 2], Y[i * 4 + 1]), q, sc.set(2.3 * s, 1.9 * s, 2.3 * s));
+          yards.setMatrixAt(i, m4);
+          yards.setColorAt(i, tmpC.set((rnd() < 0.25 ? autumn : greens)[Math.floor(rnd() * 4)]));
+        }
+        yards.computeBoundingSphere();
+        ch.treeGroup.add(yards);
+        tris += (crownGeo.index ? crownGeo.index.count : crownGeo.attributes.position.count) / 3 * ny;
+        ch.yard = null;
+      }
       // trees
       const T = ch.trees;
       const count = T.length / 4;
       if (count) {
-        let nRound = 0, nCone = 0;
-        for (let i = 0; i < count; i++) if (T[i * 4 + 3] === 3) nCone++; else nRound++;
+        let nRound = 0, nCone = 0, nPop = 0;
+        for (let i = 0; i < count; i++) { const ty = T[i * 4 + 3]; if (ty === 3) nCone++; else if (ty === 1) nPop++; else nRound++; }
         const trunks = new THREE.InstancedMesh(trunkGeo, M.trunk, count);
         const crowns = nRound ? new THREE.InstancedMesh(crownGeo, M.foliage, nRound) : null;
+        const pops = nPop ? new THREE.InstancedMesh(poplarGeo, M.foliage, nPop) : null; // tall poplars: one smooth crown
         const cones = nCone ? new THREE.InstancedMesh(coneGeo, M.foliage, nCone) : null;
-        let ir = 0, ic = 0;
+        let ir = 0, ic = 0, ip = 0;
         for (let i = 0; i < count; i++) {
           const x = T[i * 4], z = T[i * 4 + 1], s = T[i * 4 + 2], type = T[i * 4 + 3];
           q.setFromAxisAngle(up, rnd() * 6.28);
@@ -788,12 +948,13 @@ export class City {
             const dims = type === 0 ? [3.1, 2.6, 3.1, 4.4] : type === 1 ? [1.25, 5.2, 1.25, 6.0] : [1.7, 1.5, 1.7, 2.6];
             const j = 0.85 + rnd() * 0.3;
             m4.compose(v.set(x, dims[3] * s, z), q, sc.set(dims[0] * s * j, dims[1] * s * (0.9 + rnd() * 0.2), dims[2] * s * j));
-            crowns.setMatrixAt(ir, m4);
             const pal = type === 1 ? poplar : rnd() < 0.14 ? autumn : greens;
-            crowns.setColorAt(ir++, tmpC.set(pal[Math.floor(rnd() * pal.length)]));
+            tmpC.set(pal[Math.floor(rnd() * pal.length)]);
+            if (type === 1) { pops.setMatrixAt(ip, m4); pops.setColorAt(ip++, tmpC); }
+            else { crowns.setMatrixAt(ir, m4); crowns.setColorAt(ir++, tmpC); }
           }
         }
-        for (const im of [trunks, crowns, cones]) {
+        for (const im of [trunks, crowns, pops, cones]) {
           if (!im) continue;
           im.castShadow = this.settings.quality === 'high';
           im.receiveShadow = false;
@@ -853,11 +1014,12 @@ export class City {
   // ------------------------------------------------------------------ per frame
   update(dt, camera, drawDistance, night) {
     const cx = camera.position.x, cz = camera.position.z;
-    const treeDist = drawDistance * 0.72;
+    const treeDist = drawDistance * 0.62; // puffy crowns cost 3x the triangles; far trees are only a few pixels
     for (const ch of this.chunkList) {
       const d = Math.hypot(ch.center.x - cx, ch.center.z - cz) - ch.radius;
       ch.group.visible = d < drawDistance;
       ch.treeGroup.visible = d < treeDist;
+      if (ch.propMesh) ch.propMesh.visible = d < 260; // small roof props would only be stray pixels further away
     }
     // night lighting of street furniture
     const nl = night;
@@ -869,6 +1031,45 @@ export class City {
 }
 
 // ---------------------------------------------------------------------- helpers
+// concatenate flat ground layers (FlatBuilder, no dash attribute) into one geometry, keeping their order
+function mergeFlat(list) {
+  let nv = 0, ni = 0;
+  for (const B of list) { nv += B.vc; ni += B.idx.n; }
+  const pos = new Float32Array(nv * 3), colr = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3), idx = new Uint32Array(ni);
+  let v = 0, i = 0;
+  for (const B of list) {
+    pos.set(B.pos.a.subarray(0, B.vc * 3), v * 3); colr.set(B.col.a.subarray(0, B.vc * 3), v * 3);
+    for (let k = 0; k < B.idx.n; k++) idx[i + k] = B.idx.a[k] + v;
+    v += B.vc; i += B.idx.n;
+  }
+  for (let k = 1; k < nrm.length; k += 3) nrm[k] = 1;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(colr, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+
+// merge plain geometries (position + normal) into one indexed geometry
+export function mergeGeos(list) {
+  const pos = [], nrm = [], idx = [];
+  for (const g of list) {
+    const base = pos.length / 3, p = g.attributes.position.array, n = g.attributes.normal.array;
+    for (let i = 0; i < p.length; i++) { pos.push(p[i]); nrm.push(n[i]); }
+    if (g.index) for (const i of g.index.array) idx.push(base + i);
+    else for (let i = 0; i < p.length / 3; i++) idx.push(base + i);
+    g.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  return g;
+}
+
 // merge axis-aligned boxes [x, y, z, sx, sy, sz, color] into one geometry with vertex colors
 export function mergeBoxes(list) {
   const pos = [], nrm = [], colr = [], idx = [];

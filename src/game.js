@@ -8,6 +8,7 @@ import { Environment } from './world/sky.js';
 import { sharedUniforms } from './world/materials.js';
 import { VehicleManager } from './entities/vehicle.js';
 import { HumanRenderer, POSE } from './entities/humans.js';
+import { PlayerSprite } from './entities/playerSprite.js';
 import { Player } from './entities/player.js';
 import { Ped, PedManager } from './entities/peds.js';
 import { TrafficManager } from './entities/traffic.js';
@@ -79,6 +80,9 @@ export class Game {
     this.vehicles = new VehicleManager(this);
     this.humanRenderer = new HumanRenderer(this.scene);
     this.player = new Player(this);
+    // experiment: HD-2D sprite player instead of the chibi model (?sprite=1 or cheat SPRAYT)
+    this.playerSprite = new PlayerSprite(this);
+    if (new URLSearchParams(location.search).get('sprite') === '1') this.setPlayerSprite(true);
     this.peds = new PedManager(this);
     this.traffic = new TrafficManager(this);
     this.police = new PoliceManager(this);
@@ -502,6 +506,8 @@ export class Game {
     if (before !== this.renderer.shadowMap.enabled) this.scene.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.needsUpdate = true; }); });
   }
 
+  setPlayerSprite(on) { this.playerSprite.active = on; }
+
   // internal pixel resolution from Settings, scaled up to the screen by a whole number
   onResize() {
     this.pixel.resize(this.settings.pixelRes);
@@ -520,6 +526,7 @@ export class Game {
     else if (I.cheat('POLITSIYA')) { this.police.addHeat(5); this.hud.notify('Cheat: police!'); }
     else if (I.cheat('TUNGI')) { this.env.time = 22 * 60; this.hud.notify('Cheat: night'); }
     else if (I.cheat('KUNDUZ')) { this.env.time = 12 * 60; this.hud.notify('Cheat: midday'); }
+    else if (I.cheat('SPRAYT')) { this.setPlayerSprite(!this.playerSprite.active); this.hud.notify(`Debug: ${this.playerSprite.active ? 'sprite' : 'chibi'} player`); }
     else if (I.cheat('MOSHINA')) {
       const t = p.vehicle || p;
       const h = t.heading;
@@ -672,7 +679,8 @@ export class Game {
     // people
     const R = this.humanRenderer;
     R.begin();
-    if (this.state !== 'title') R.push(p);
+    if (this.playerSprite.active) this.playerSprite.update(p, this.camera, this.state !== 'title');
+    else if (this.state !== 'title') R.push(p);
     const cx = this.camera.position.x, cz = this.camera.position.z, maxD = Math.min(this.settings.drawDistance, 260);
     for (const list of [this.peds.list, this.police.cops, this.missionNPCs]) for (const h of list) if (Math.abs(h.x - cx) < maxD && Math.abs(h.z - cz) < maxD) R.push(h);
     R.end();

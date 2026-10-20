@@ -130,10 +130,11 @@ export class Environment {
       this.sun.shadow.mapSize.set(size, size);
       if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
     }
-    // small offsets in toy-scale world units (the shadow depth range is ~900 m): big ones push the
-    // ground's shadow lookup up into low objects such as cars and give striped acne under them
-    this.sun.shadow.bias = -0.00008;
-    this.sun.shadow.normalBias = 0.06;
+    // offsets in world units (the shadow depth range is ~900 m): enough normal offset that walls almost
+    // parallel to the sun don't shadow themselves in stripes, small enough that the ground's lookup
+    // stays below car bodies (~0.3 m up) so they don't get striped acne underneath
+    this.sun.shadow.bias = -0.0002;
+    this.sun.shadow.normalBias = 0.15;
   }
 
   get hours() { return this.time / 60; }

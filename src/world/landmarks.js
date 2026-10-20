@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { makeFarFogMaterial, toon } from './materials.js';
 import { cuteGeometry } from './palette.js';
+import { PolyBuf, bevelBox, prism } from '../util/shapes.js';
 import { ringCentroid, ringArea, pointInRing } from '../util/math.js';
 
 const C = (hex) => new THREE.Color(hex);
@@ -63,69 +64,119 @@ function indexify(g) {
   return g;
 }
 
-// ------------------------------------------------------------------ Tashkent TV Tower (375 m)
-function tvTower() {
-  const parts = [];
-  const body = lathe([
-    [0.01, 0], [4.6, 0], [4.3, 60], [4.0, 92], [6.5, 95], [15.5, 99], [17, 103], [17, 107], [15.5, 110], [9, 113],
-    [4.0, 116], [3.6, 218], [7.8, 222], [8.2, 226], [8.2, 233], [6.5, 236], [3.0, 239], [2.2, 252], [1.7, 300], [1.1, 340], [0.55, 372], [0.01, 375],
-  ], 28);
-  colorize(body, (x, y, z, c) => {
-    if (y > 102.5 && y < 108) c.set(0x2c3b4a);
-    else if (y > 223 && y < 232) c.set(0x334455);
-    else if (y > 239 && Math.floor((y - 239) / 17) % 2 === 0) c.set(0xc8352c);
-    else if (y > 95 && y < 113) c.set(0xe4e6ea);
-    else c.set(0xd3d9df);
-  });
-  parts.push(body);
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI * 2 + 0.3;
-    const base = new THREE.Vector3(Math.cos(a) * 30, 0, Math.sin(a) * 30);
-    const top = new THREE.Vector3(Math.cos(a) * 4.6, 97, Math.sin(a) * 4.6);
-    parts.push(solid(beam(base, top, 2.4, 1.3, 8), 0xc9d0d8));
-    // cross bracing between legs
-    const b2 = (k + 1) / 3 * Math.PI * 2 + 0.3;
-    for (const h of [25, 55]) {
-      const f = h / 97;
-      const p1 = base.clone().lerp(top, f);
-      const p2 = new THREE.Vector3(Math.cos(b2) * 30, 0, Math.sin(b2) * 30).lerp(new THREE.Vector3(Math.cos(b2) * 4.6, 97, Math.sin(b2) * 4.6), f);
-      parts.push(solid(beam(p1, p2, 0.7, 0.7, 6), 0xb7c0ca));
-    }
-    // base pavilion block
-    parts.push(solid(box(Math.cos(a) * 30, 3, Math.sin(a) * 30, 7, 6, 7), 0xa9b0b6));
+// ------------------------------------------------------------------ voxel-style parts
+// [PolyBuf, colour] list -> one flat-shaded geometry with vertex colours
+function voxel(list) {
+  const pos = [], nrm = [], col = [], idx = [], c = new THREE.Color();
+  for (const [P, hex] of list) {
+    const base = pos.length / 3;
+    c.set(hex);
+    for (let i = 0; i < P.count; i++) { pos.push(P.pos[i * 3], P.pos[i * 3 + 1], P.pos[i * 3 + 2]); nrm.push(P.nrm[i * 3], P.nrm[i * 3 + 1], P.nrm[i * 3 + 2]); col.push(c.r, c.g, c.b); }
+    for (const i of P.idx) idx.push(base + i);
   }
-  parts.push(solid(box(0, 4, 0, 16, 8, 16), 0xbac1c8));
-  return merge(parts);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  return g;
+}
+// soft box rotated by rx about x (around its own centre)
+function sbox(x, y, z, sx, sy, sz, r = 0, rx = 0) {
+  const P = bevelBox(new PolyBuf(), 0, 0, 0, sx, sy, sz, r);
+  const c = Math.cos(rx), s = Math.sin(rx);
+  for (const a of [P.pos, P.nrm]) for (let i = 0; i < a.length; i += 3) { const yy = a[i + 1], zz = a[i + 2]; a[i + 1] = yy * c - zz * s; a[i + 2] = yy * s + zz * c; }
+  for (let i = 0; i < P.pos.length; i += 3) { P.pos[i] += x; P.pos[i + 1] += y; P.pos[i + 2] += z; }
+  return P;
+}
+// square beam from a to b (4-sided, chunky)
+function sbeam(a, b, r, hex, list) {
+  const g = beam(a, b, r, r * 0.8, 4);
+  const P = new PolyBuf(), p = g.attributes.position, idx = g.index.array;
+  for (let i = 0; i < idx.length; i += 3) {
+    const v = [idx[i], idx[i + 1], idx[i + 2]].map((k) => [p.getX(k), p.getY(k), p.getZ(k)]);
+    const ux = v[1][0] - v[0][0], uy = v[1][1] - v[0][1], uz = v[1][2] - v[0][2], wx = v[2][0] - v[0][0], wy = v[2][1] - v[0][1], wz = v[2][2] - v[0][2];
+    P.poly(v, [uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx]);
+  }
+  list.push([P, hex]);
 }
 
-// ------------------------------------------------------------------ Amir Temur equestrian monument
+// ------------------------------------------------------------------ Tashkent TV Tower (375 m), voxel style
+function tvTower() {
+  const parts = [];
+  const ring = (y0, h, r0, r1, hex, n = 8) => parts.push([prism(new PolyBuf(), 0, y0, 0, r0, r1, h, n), hex]);
+  // shaft in chunky steps with alternating bands
+  for (let k = 0; k < 6; k++) ring(k * 16, 16, 4.6 - k * 0.1, 4.6 - k * 0.1, k % 2 ? 0xf4ede0 : 0xffffff);
+  // lower observation pod
+  ring(95, 4, 6.5, 15.5, 0xb9b4d6); ring(99, 4, 15.5, 17, 0xf4ede0); ring(103, 5, 17, 17, 0x5cc3f0); ring(108, 3, 17, 15.5, 0xf4ede0);
+  ring(111, 2, 15.5, 9, 0xb9b4d6); ring(113, 3, 9, 4, 0xf4ede0);
+  for (let k = 0; k < 6; k++) ring(116 + k * 17, 17, 4.0 - k * 0.07, 4.0 - k * 0.07, k % 2 ? 0xf4ede0 : 0xffffff);
+  // upper pod
+  ring(218, 4, 3.6, 7.8, 0xb9b4d6); ring(222, 4, 7.8, 8.2, 0xf4ede0); ring(226, 7, 8.2, 8.2, 0x5cc3f0); ring(233, 3, 8.2, 6.5, 0xf4ede0); ring(236, 3, 6.5, 3, 0xb9b4d6);
+  // antenna: square sections in red and white
+  for (let k = 0; k < 8; k++) { const r0 = 2.2 - k * 0.2; ring(239 + k * 17, 17, r0, r0 - 0.2, k % 2 ? 0xffffff : 0xe8574a, 4); }
+  // three splayed legs with braces and little pavilions at their feet
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2 + 0.3, b2 = ((k + 1) / 3) * Math.PI * 2 + 0.3;
+    const base = new THREE.Vector3(Math.cos(a) * 30, 0, Math.sin(a) * 30), top = new THREE.Vector3(Math.cos(a) * 4.6, 97, Math.sin(a) * 4.6);
+    sbeam(base, top, 2.4, 0xf4ede0, parts);
+    for (const h of [25, 55]) {
+      const f = h / 97;
+      sbeam(base.clone().lerp(top, f), new THREE.Vector3(Math.cos(b2) * 30, 0, Math.sin(b2) * 30).lerp(new THREE.Vector3(Math.cos(b2) * 4.6, 97, Math.sin(b2) * 4.6), f), 0.8, 0xb9b4d6, parts);
+    }
+    parts.push([bevelBox(new PolyBuf(), Math.cos(a) * 30, 3, Math.sin(a) * 30, 7, 6, 7, 0.5), 0xb9b4d6]);
+    parts.push([bevelBox(new PolyBuf(), Math.cos(a) * 30, 6.4, Math.sin(a) * 30, 7.6, 0.8, 7.6, 0.2), 0x3a8fe0]);
+  }
+  parts.push([bevelBox(new PolyBuf(), 0, 4, 0, 16, 8, 16, 0.6), 0xb9b4d6]);
+  return voxel(parts);
+}
+
+// ------------------------------------------------------------------ Amir Temur on his horse, chibi voxel style
 function temurStatue() {
-  const granite = 0x6e4d45, bronze = 0x5a4a2c;
-  const parts = [
-    solid(box(0, 0.4, 0, 11, 0.8, 11), 0x8a7c72),
-    solid(box(0, 1.2, 0, 8.5, 0.8, 8.5), 0x7a6a62),
-    solid(box(0, 4.3, 0, 4.2, 5.4, 6.2), granite),
-    solid(box(0, 7.15, 0, 4.6, 0.35, 6.6), 0x5c3f38),
-  ];
+  const parts = [];
+  const gold = 0xf4b726, bronze = 0xb8693e, cape = 0xc23b4a;
+  // pedestal: stone steps, a raspberry granite block with a blue tile band and gold trim
+  parts.push([bevelBox(new PolyBuf(), 0, 0.4, 0, 11, 0.8, 11, 0.2), 0xb9b4d6]);
+  parts.push([bevelBox(new PolyBuf(), 0, 1.2, 0, 8.5, 0.8, 8.5, 0.2), 0x7b7aa6]);
+  parts.push([bevelBox(new PolyBuf(), 0, 4.3, 0, 4.2, 5.4, 6.2, 0.25), 0xc23b4a]);
+  parts.push([bevelBox(new PolyBuf(), 0, 6.2, 0, 4.32, 0.7, 6.32), 0x2c5fb8]);
+  parts.push([bevelBox(new PolyBuf(), 0, 6.62, 0, 4.36, 0.14, 6.36), gold]);
+  parts.push([bevelBox(new PolyBuf(), 0, 7.15, 0, 4.6, 0.35, 6.6, 0.1), 0x45305e]);
   const y0 = 7.3, S = 1.55;
-  const P = (x, y, z, sx, sy, sz, rx = 0, ry = 0, rz = 0) => parts.push(solid(box(x * S, y0 + y * S, z * S, sx * S, sy * S, sz * S, rx, ry, rz), bronze));
-  P(0, 1.55, 0, 0.75, 0.8, 2.1);           // horse body
-  P(0, 2.15, 1.05, 0.42, 0.95, 0.45, -0.75); // neck
-  P(0, 2.55, 1.55, 0.32, 0.36, 0.75, -0.35); // head
-  P(0.22, 0.6, 0.75, 0.16, 1.2, 0.18);     // legs
-  P(-0.22, 1.0, 1.05, 0.16, 1.0, 0.18, -1.0); // raised front leg
-  P(0.22, 0.6, -0.75, 0.16, 1.2, 0.18, 0.12);
-  P(-0.22, 0.6, -0.8, 0.16, 1.2, 0.18, -0.1);
-  P(0, 1.5, -1.25, 0.14, 0.8, 0.14, 0.5);  // tail
-  P(0, 2.55, -0.05, 0.55, 0.85, 0.4);      // rider torso
-  P(0, 3.15, 0.0, 0.3, 0.32, 0.3);         // head
-  P(0, 3.38, 0.0, 0.36, 0.14, 0.36);       // helmet
-  P(0.36, 3.0, 0.3, 0.13, 0.13, 0.75, -0.5); // raised right arm
-  P(-0.34, 2.45, 0.1, 0.12, 0.6, 0.13, 0.2);
-  P(0, 2.2, -0.35, 0.9, 1.1, 0.12, 0.25);  // cloak
-  P(0.3, 1.75, 0.05, 0.12, 0.6, 0.14, 0, 0, 0.25); // legs over the horse
-  P(-0.3, 1.75, 0.05, 0.12, 0.6, 0.14, 0, 0, -0.25);
-  return merge(parts);
+  const B = (x, y, z, sx, sy, sz, hex, r = 0.06, rx = 0) => parts.push([sbox(x * S, y0 + y * S, z * S, sx * S, sy * S, sz * S, r * S, rx), hex]);
+  // horse with a big friendly head, one front hoof raised
+  B(0, 1.5, 0, 0.9, 0.85, 2.0, gold, 0.14);
+  B(0, 2.2, 0.85, 0.44, 0.8, 0.46, gold, 0.08, -0.6);
+  B(0, 2.7, 1.32, 0.5, 0.52, 0.78, gold, 0.1, -0.25);
+  for (const s of [-1, 1]) { B(s * 0.15, 3.02, 1.12, 0.1, 0.2, 0.08, gold, 0.02); B(s * 0.25, 2.78, 1.4, 0.02, 0.1, 0.1, 0x2b1d3a, 0); }
+  B(0, 2.45, 0.7, 0.14, 0.6, 0.62, bronze, 0.03, -0.6);
+  B(0.24, 0.62, 0.72, 0.2, 1.14, 0.22, gold, 0.05);
+  B(-0.24, 1.0, 1.02, 0.2, 0.95, 0.22, gold, 0.05, -1.0);
+  B(0.24, 0.62, -0.72, 0.2, 1.14, 0.22, gold, 0.05, 0.12);
+  B(-0.24, 0.62, -0.78, 0.2, 1.14, 0.22, gold, 0.05, -0.1);
+  B(0, 1.5, -1.2, 0.16, 0.85, 0.16, bronze, 0.04, 0.5);
+  // the rider: big head under a gold helmet, a flowing red cape, raised right arm
+  B(0, 2.6, -0.05, 0.58, 0.78, 0.44, gold, 0.1);
+  B(0, 3.3, 0.0, 0.5, 0.5, 0.48, gold, 0.08);
+  B(0, 3.62, 0, 0.56, 0.2, 0.54, 0xffd08a, 0.05);
+  B(0, 3.84, 0, 0.1, 0.26, 0.1, 0xffd08a, 0.02);
+  B(0, 2.35, -0.38, 0.9, 1.1, 0.1, cape, 0.03, 0.25);
+  B(0.38, 3.0, 0.32, 0.15, 0.15, 0.8, gold, 0.04, -0.5);
+  B(-0.36, 2.48, 0.1, 0.14, 0.62, 0.15, gold, 0.04, 0.2);
+  for (const s of [-1, 1]) B(s * 0.34, 1.8, 0.08, 0.14, 0.62, 0.16, gold, 0.04);
+  return voxel(parts);
+}
+
+// small turquoise domes ringing the great dome of Chorsu bazaar (unit size, scaled by the caller)
+function smallDome() {
+  const parts = [];
+  parts.push([prism(new PolyBuf(), 0, 0, 0, 1.0, 1.0, 0.45, 8), 0xffffff]);
+  parts.push([prism(new PolyBuf(), 0, 0.45, 0, 1.0, 0.86, 0.35, 8), 0x26c0b9]);
+  parts.push([prism(new PolyBuf(), 0, 0.8, 0, 0.86, 0.6, 0.32, 8), 0x26c0b9]);
+  parts.push([prism(new PolyBuf(), 0, 1.12, 0, 0.6, 0.28, 0.28, 8), 0x5cc3f0]);
+  parts.push([bevelBox(new PolyBuf(), 0, 1.5, 0, 0.12, 0.22, 0.12), 0xf4b726]);
+  return voxel(parts);
 }
 
 // ------------------------------------------------------------------ Independence globe
@@ -235,6 +286,17 @@ export function buildLandmarks(game) {
   if (L.temur) {
     add(temurStatue(), L.temur.x, L.temur.z, -2.2);
     collision.addCircle(L.temur.x, L.temur.z, 6.2, 18);
+  }
+  // Chorsu bazaar: a ring of small turquoise domes around the great tiled dome
+  if (L.chorsu) {
+    const nb = nearestBuilding(map, L.chorsu.x, L.chorsu.z, 60);
+    if (nb && nb.b.roof === 3) {
+      const R = Math.sqrt(Math.abs(ringArea(nb.b.ring)) / Math.PI) * 0.92, n = 10, rs = Math.max(2.5, R * 0.16);
+      const dome = smallDome();
+      dome.scale(rs, rs, rs);
+      for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2; add(dome.clone(), nb.cx + Math.cos(a) * R, nb.cz + Math.sin(a) * R, a).position.y = nb.b.h; }
+      group.children.slice(-n).forEach((m) => m.updateMatrix());
+    }
   }
   if (L.globe) {
     add(globe(), L.globe.x, L.globe.z, 0.4);

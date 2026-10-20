@@ -1,9 +1,11 @@
-// Procedural low-poly vehicles typical for Tashkent streets, one merged geometry per type, in the
-// cute pixel palette with flat toon shading.
+// Procedural toy cars typical for Tashkent streets: soft chamfered bodies, bubbly cabins, big
+// wheels and headlight "eyes", one merged geometry per type, in the cute pixel palette. Physics
+// sizes (L, W, H, clearance, wheel radius) are unchanged; only the drawing is toy-like.
 // aMat: 0 fixed colour, 1 paint, 2 glass, 3 headlight, 4 taillight, 5 siren red, 6 siren blue, 7 chrome/trim
 import * as THREE from 'three';
 import { PAL } from '../world/palette.js';
 import { TOON_RAMP } from '../world/materials.js';
+import { PolyBuf, bevelBox } from '../util/shapes.js';
 
 const WHITE = PAL.white;
 // same list lengths as before, so traffic picks paints with the same random draws
@@ -30,38 +32,37 @@ export const TRAFFIC_MIX = [
   ['malibu', 5], ['treker', 5], ['taxi', 5],
 ];
 
+// drawn wheels are this much bigger than the physics wheel radius (toy look); see vehicle.js
+export const TOY_WHEEL = 1.28;
+
 class VB {
-  constructor() { this.pos = []; this.nrm = []; this.col = []; this.mat = []; this.idx = []; }
-  quad(a, b, c, d, color, mat, cx, cy, cz) {
-    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = d[0] - a[0], vy = d[1] - a[1], vz = d[2] - a[2];
-    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-    const l = Math.hypot(nx, ny, nz);
-    if (l < 1e-9) return;
-    nx /= l; ny /= l; nz /= l;
-    const fx = (a[0] + c[0]) / 2 - cx, fy = (a[1] + c[1]) / 2 - cy, fz = (a[2] + c[2]) / 2 - cz;
-    let order = [a, b, c, d];
-    if (nx * fx + ny * fy + nz * fz < 0) { order = [a, d, c, b]; nx = -nx; ny = -ny; nz = -nz; }
+  constructor() { this.pos = []; this.nrm = []; this.col = []; this.mat = []; this.idx = []; this.c = new THREE.Color(); }
+  // append a PolyBuf; colour and material can depend on the face normal (e.g. glass sides, painted roof)
+  add(P, color, mat) {
     const base = this.pos.length / 3;
-    const cl = new THREE.Color(color);
-    for (const p of order) { this.pos.push(p[0], p[1], p[2]); this.nrm.push(nx, ny, nz); this.col.push(cl.r, cl.g, cl.b); this.mat.push(mat); }
-    this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    for (let i = 0; i < P.count; i++) {
+      const n = [P.nrm[i * 3], P.nrm[i * 3 + 1], P.nrm[i * 3 + 2]];
+      this.c.set(typeof color === 'function' ? color(n) : color);
+      this.pos.push(P.pos[i * 3], P.pos[i * 3 + 1], P.pos[i * 3 + 2]); this.nrm.push(n[0], n[1], n[2]);
+      this.col.push(this.c.r, this.c.g, this.c.b); this.mat.push(typeof mat === 'function' ? mat(n) : mat);
+    }
+    for (const i of P.idx) this.idx.push(base + i);
   }
-  // frustum box: bottom w0 x l0 at y0, top w1 x l1 at y0+h shifted by sz along z; all centred at (cx, cz)
-  frustum(cx, y0, cz, w0, l0, w1, l1, h, sz, color, mat, opts = {}) {
-    const y1 = y0 + h;
-    const B = [[cx - w0 / 2, y0, cz - l0 / 2], [cx + w0 / 2, y0, cz - l0 / 2], [cx + w0 / 2, y0, cz + l0 / 2], [cx - w0 / 2, y0, cz + l0 / 2]];
-    const T = [[cx - w1 / 2, y1, cz + sz - l1 / 2], [cx + w1 / 2, y1, cz + sz - l1 / 2], [cx + w1 / 2, y1, cz + sz + l1 / 2], [cx - w1 / 2, y1, cz + sz + l1 / 2]];
-    const ccy = y0 + h / 2, ccz = cz + sz / 2;
-    const m = (k) => (opts[k] !== undefined ? opts[k] : mat);
-    const c = (k) => (opts[k + 'C'] !== undefined ? opts[k + 'C'] : color);
-    if (!opts.noTop) this.quad(T[0], T[1], T[2], T[3], c('top'), m('top'), cx, ccy, ccz);
-    if (!opts.noBottom) this.quad(B[0], B[1], B[2], B[3], c('bottom'), m('bottom'), cx, ccy, ccz);
-    this.quad(B[3], B[2], T[2], T[3], c('front'), m('front'), cx, ccy, ccz);
-    this.quad(B[0], B[1], T[1], T[0], c('back'), m('back'), cx, ccy, ccz);
-    this.quad(B[0], B[3], T[3], T[0], c('side'), m('side'), cx, ccy, ccz);
-    this.quad(B[1], B[2], T[2], T[1], c('side'), m('side'), cx, ccy, ccz);
+  // soft (chamfered) box; opt.top / opt.topZ taper the upper half, opt.shift slides it along z
+  soft(x, y, z, sx, sy, sz, r, color, mat, opt = {}) {
+    const P = bevelBox(new PolyBuf(), x, y, z, sx, sy, sz, r);
+    if (opt.top !== undefined || opt.shift) {
+      const kx = opt.top ?? 1, kz = opt.topZ ?? kx;
+      for (let i = 0; i < P.count; i++) {
+        if (P.pos[i * 3 + 1] <= y) continue;
+        const f = (P.pos[i * 3 + 1] - y) / (sy / 2);
+        P.pos[i * 3] = x + (P.pos[i * 3] - x) * (1 + (kx - 1) * f);
+        P.pos[i * 3 + 2] = z + (P.pos[i * 3 + 2] - z) * (1 + (kz - 1) * f) + (opt.shift || 0) * f;
+      }
+    }
+    const roof = (n) => n[1] > 0.6;
+    this.add(P, opt.roofColor !== undefined ? (n) => (roof(n) ? opt.roofColor : color) : color, opt.roofMat !== undefined ? (n) => (roof(n) ? opt.roofMat : mat) : mat);
   }
-  box(cx, cy, cz, sx, sy, sz, color, mat) { this.frustum(cx, cy - sy / 2, cz, sx, sz, sx, sz, sy, 0, color, mat); }
   build() {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
@@ -74,130 +75,127 @@ class VB {
   }
 }
 
-const TRIM = PAL.plum, PLATE = PAL.white, GRILLE = PAL.ink;
+const TRIM = PAL.plum, PLATE = PAL.white, INK = PAL.ink;
 
-function lights(b, L, W, y, front = true, back = true, inset = 0.24, hw = 0.34) {
-  if (front) { for (const s of [-1, 1]) b.box(s * (W / 2 - inset), y, L / 2 - 0.01, hw, 0.13, 0.05, 0xffffff, 3); }
-  if (back) { for (const s of [-1, 1]) b.box(s * (W / 2 - inset), y + 0.04, -L / 2 + 0.01, hw * 0.9, 0.14, 0.05, PAL.coral, 4); }
+// headlight "eyes" (white with a dark pupil looking slightly inward) above a little smile
+function face(b, L, W, y, eye = 0.3, smileY = null) {
+  for (const s of [-1, 1]) {
+    const ex = s * (W / 2 - eye * 0.85);
+    b.soft(ex, y, L / 2 - 0.02, eye, eye * 0.78, 0.07, 0.05, 0xffffff, 3);
+    b.soft(ex - s * eye * 0.12, y - eye * 0.04, L / 2 + 0.018, eye * 0.42, eye * 0.46, 0.02, 0, INK, 0);
+  }
+  const sy = smileY ?? y - eye * 0.75;
+  b.soft(0, sy, L / 2 + 0.005, W * 0.24, 0.05, 0.03, 0, INK, 0);
+  for (const s of [-1, 1]) b.soft(s * W * 0.14, sy + 0.035, L / 2 + 0.005, 0.05, 0.06, 0.03, 0, INK, 0);
 }
 
-function plates(b, L, y) {
-  b.box(0, y, L / 2 + 0.015, 0.52, 0.12, 0.02, PLATE, 0);
-  b.box(0, y + 0.08, -L / 2 - 0.015, 0.52, 0.12, 0.02, PLATE, 0);
+function tail(b, L, W, y, w = 0.3) {
+  for (const s of [-1, 1]) b.soft(s * (W / 2 - w * 0.8), y, -L / 2 + 0.02, w, w * 0.6, 0.06, 0.04, PAL.coral, 4);
+  b.soft(0, y - 0.12, -L / 2 - 0.01, 0.48, 0.12, 0.02, 0, PLATE, 0);
+}
+
+function bumpers(b, L, W, y) {
+  b.soft(0, y, L / 2 - 0.04, W - 0.04, 0.2, 0.16, 0.07, TRIM, 7);
+  b.soft(0, y, -L / 2 + 0.04, W - 0.04, 0.2, 0.16, 0.07, TRIM, 7);
 }
 
 function buildBody(t) {
   const b = new VB();
-  const { L, W, H, clear: c0 } = t;
+  const { L, W, H } = t;
+  const c = t.clear + 0.06; // sits a little higher over the bigger toy wheels
+  const BW = W - 0.12; // body slightly narrower so the chunky wheels show at the sides
   switch (t.body) {
     case 'sedan':
     case 'sedan_old':
     case 'sedan_big': {
-      const old = t.body === 'sedan_old';
-      const belt = c0 + (old ? 0.6 : 0.64);
-      b.frustum(0, c0, 0, W, L, W - 0.08, L - (old ? 0.05 : 0.18), belt - c0, 0, 0xffffff, 1);
-      const cabL = L * (old ? 0.48 : 0.5), topL = L * (old ? 0.32 : 0.27);
-      const cabZ = -L * 0.06;
-      b.frustum(0, belt, cabZ, W - 0.14, cabL, W - (old ? 0.36 : 0.42), topL, H - belt - 0.05, old ? -0.05 : -0.12, 0xffffff, 2, { bottom: 2 });
-      b.frustum(0, H - 0.05, cabZ + (old ? -0.05 : -0.12), W - (old ? 0.38 : 0.44), topL + 0.02, W - (old ? 0.4 : 0.48), topL - 0.06, 0.05, 0, 0xffffff, 1);
-      b.box(0, c0 + 0.12, L / 2 - 0.02, W - 0.02, 0.2, 0.08, TRIM, 7);
-      b.box(0, c0 + 0.12, -L / 2 + 0.02, W - 0.02, 0.2, 0.08, TRIM, 7);
-      b.box(0, belt - 0.2, L / 2 - 0.01, W * 0.38, 0.16, 0.04, GRILLE, 0);
-      for (const s of [-1, 1]) b.box(s * (W / 2 + 0.06), belt + 0.06, cabZ + cabL / 2 - 0.12, 0.12, 0.09, 0.16, 0xffffff, 1);
-      lights(b, L, W, belt - 0.14, true, true, 0.25, old ? 0.3 : 0.36);
-      plates(b, L, c0 + 0.22);
+      const belt = c + (t.body === 'sedan_old' ? 0.56 : 0.6);
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.06, 0.16, 0xffffff, 1);
+      const cabL = L * (t.body === 'sedan_big' ? 0.5 : 0.54);
+      b.soft(0, (belt + H) / 2 - 0.01, -L * 0.07, BW - 0.12, H - belt + 0.02, cabL, 0.13, 0xffffff, 2, { top: 0.84, topZ: 0.72, roofColor: 0xffffff, roofMat: 1 });
+      bumpers(b, L, BW, c + 0.1);
+      face(b, L, BW, belt - 0.17);
+      tail(b, L, BW, belt - 0.16);
+      for (const s of [-1, 1]) b.soft(s * (BW / 2 + 0.05), belt + 0.08, -L * 0.07 + cabL / 2 - 0.1, 0.1, 0.09, 0.14, 0.02, 0xffffff, 1);
       break;
     }
     case 'hatch':
     case 'hatch_small': {
-      const belt = c0 + 0.62;
-      b.frustum(0, c0, 0, W, L, W - 0.08, L - 0.14, belt - c0, 0, 0xffffff, 1);
-      const cabL = L * 0.64, topL = L * 0.42;
-      b.frustum(0, belt, -L * 0.1, W - 0.14, cabL, W - 0.36, topL, H - belt - 0.05, -0.12, 0xffffff, 2, { bottom: 2 });
-      b.frustum(0, H - 0.05, -L * 0.1 - 0.12, W - 0.38, topL + 0.02, W - 0.42, topL - 0.04, 0.05, 0, 0xffffff, 1);
-      b.box(0, c0 + 0.12, L / 2 - 0.02, W - 0.02, 0.2, 0.08, TRIM, 7);
-      b.box(0, c0 + 0.12, -L / 2 + 0.02, W - 0.02, 0.2, 0.08, TRIM, 7);
-      b.box(0, belt - 0.18, L / 2 - 0.01, W * 0.34, 0.12, 0.04, GRILLE, 0);
-      for (const s of [-1, 1]) b.box(s * (W / 2 + 0.05), belt + 0.06, L * 0.1, 0.1, 0.08, 0.14, 0xffffff, 1);
-      lights(b, L, W, belt - 0.12, true, true, 0.22, 0.3);
-      plates(b, L, c0 + 0.22);
+      const belt = c + 0.58;
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.06, 0.16, 0xffffff, 1);
+      b.soft(0, (belt + H) / 2 - 0.01, -L * 0.1, BW - 0.1, H - belt + 0.02, L * 0.66, 0.14, 0xffffff, 2, { top: 0.84, topZ: 0.8, shift: -0.06, roofColor: 0xffffff, roofMat: 1 });
+      bumpers(b, L, BW, c + 0.1);
+      face(b, L, BW, belt - 0.16, 0.28);
+      tail(b, L, BW, belt - 0.14, 0.26);
       break;
     }
     case 'suv': {
-      const belt = c0 + 0.7;
-      b.frustum(0, c0, 0, W, L, W - 0.06, L - 0.12, belt - c0, 0, 0xffffff, 1);
-      b.frustum(0, belt, -L * 0.08, W - 0.12, L * 0.62, W - 0.3, L * 0.5, H - belt - 0.06, -0.08, 0xffffff, 2, { bottom: 2 });
-      b.frustum(0, H - 0.06, -L * 0.08 - 0.08, W - 0.3, L * 0.52, W - 0.34, L * 0.48, 0.06, 0, 0xffffff, 1);
-      for (const s of [-1, 1]) b.box(s * (W / 2 - 0.05), H + 0.02, -L * 0.1, 0.06, 0.05, L * 0.45, TRIM, 7);
-      b.box(0, c0 + 0.12, L / 2 - 0.02, W, 0.24, 0.1, TRIM, 7);
-      b.box(0, c0 + 0.12, -L / 2 + 0.02, W, 0.24, 0.1, TRIM, 7);
-      b.box(0, belt - 0.2, L / 2 - 0.01, W * 0.5, 0.18, 0.04, GRILLE, 0);
-      lights(b, L, W, belt - 0.14, true, true, 0.26, 0.36);
-      plates(b, L, c0 + 0.24);
+      const belt = c + 0.66;
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.06, 0.15, 0xffffff, 1);
+      b.soft(0, (belt + H) / 2, -L * 0.08, BW - 0.1, H - belt, L * 0.66, 0.12, 0xffffff, 2, { top: 0.9, topZ: 0.86, roofColor: 0xffffff, roofMat: 1 });
+      for (const s of [-1, 1]) b.soft(s * (BW / 2 - 0.12), H + 0.04, -L * 0.1, 0.07, 0.06, L * 0.45, 0.02, TRIM, 7);
+      bumpers(b, L, BW, c + 0.12);
+      face(b, L, BW, belt - 0.18, 0.32);
+      tail(b, L, BW, belt - 0.16);
       break;
     }
     case 'van': {
-      const belt = c0 + 0.78;
-      b.frustum(0, c0, 0, W, L, W - 0.04, L - 0.05, belt - c0, -0.02, 0xffffff, 1);
-      b.frustum(0, belt, -0.05, W - 0.06, L - 0.12, W - 0.1, L - 0.42, H - belt - 0.16, -0.12, 0xffffff, 2, { bottom: 2, back: 1 });
-      b.frustum(0, H - 0.16, -0.17, W - 0.1, L - 0.42, W - 0.12, L - 0.5, 0.16, 0, 0xffffff, 1);
-      // pillars between side windows
-      for (const z of [-0.9, 0.2]) for (const s of [-1, 1]) b.box(s * (W / 2 - 0.04), (belt + H - 0.16) / 2, z, 0.04, H - belt - 0.2, 0.1, 0xffffff, 1);
-      b.box(0, c0 + 0.08, L / 2 - 0.02, W, 0.16, 0.08, TRIM, 7);
-      b.box(0, c0 + 0.08, -L / 2 + 0.02, W, 0.16, 0.08, TRIM, 7);
-      lights(b, L, W, c0 + 0.5, true, true, 0.2, 0.26);
-      plates(b, L, c0 + 0.26);
+      // Damas: a tall one-box marshrutka with a big friendly face
+      const belt = c + 0.7;
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.04, 0.15, 0xffffff, 1);
+      b.soft(0, (belt + H) / 2, -0.04, BW - 0.04, H - belt, L - 0.12, 0.15, 0xffffff, 2, { top: 0.94, topZ: 0.86, roofColor: 0xffffff, roofMat: 1 });
+      for (const z of [-0.85, 0.25]) for (const s of [-1, 1]) b.soft(s * (BW / 2 - 0.01), (belt + H) / 2 - 0.04, z, 0.04, H - belt - 0.2, 0.12, 0, 0xffffff, 1);
+      bumpers(b, L, BW, c + 0.08);
+      face(b, L, BW, c + 0.48, 0.26, c + 0.24);
+      tail(b, L, BW, c + 0.45, 0.24);
       break;
     }
     case 'pickup': {
-      const belt = c0 + 0.78;
-      b.frustum(0, c0, 0, W, L, W - 0.04, L - 0.05, belt - c0, -0.02, 0xffffff, 1);
-      const cabZ = L / 2 - 0.62;
-      b.frustum(0, belt, cabZ, W - 0.06, 1.15, W - 0.1, 0.85, H - belt - 0.14, -0.12, 0xffffff, 2, { bottom: 2, back: 1 });
-      b.frustum(0, H - 0.14, cabZ - 0.12, W - 0.1, 0.85, W - 0.12, 0.8, 0.14, 0, 0xffffff, 1);
-      // open bed walls
-      const bedL = L - 1.3, bz = -L / 2 + bedL / 2;
-      for (const s of [-1, 1]) b.box(s * (W / 2 - 0.03), belt + 0.2, bz, 0.06, 0.4, bedL, 0xffffff, 1);
-      b.box(0, belt + 0.2, -L / 2 + 0.03, W, 0.4, 0.06, 0xffffff, 1);
-      b.box(0, belt + 0.02, bz, W - 0.1, 0.04, bedL, PAL.slate, 0);
-      lights(b, L, W, c0 + 0.5, true, true, 0.2, 0.26);
-      plates(b, L, c0 + 0.26);
+      const belt = c + 0.72;
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.04, 0.15, 0xffffff, 1);
+      const cabZ = L / 2 - 0.66;
+      b.soft(0, (belt + H) / 2, cabZ, BW - 0.04, H - belt, 1.2, 0.13, 0xffffff, 2, { top: 0.92, topZ: 0.78, roofColor: 0xffffff, roofMat: 1 });
+      const bedL = L - 1.36, bz = -L / 2 + bedL / 2 + 0.02;
+      for (const s of [-1, 1]) b.soft(s * (BW / 2 - 0.04), belt + 0.18, bz, 0.08, 0.36, bedL, 0.03, 0xffffff, 1);
+      b.soft(0, belt + 0.18, -L / 2 + 0.06, BW, 0.36, 0.08, 0.03, 0xffffff, 1);
+      b.soft(0, belt + 0.01, bz, BW - 0.12, 0.04, bedL, 0, PAL.slate, 0);
+      bumpers(b, L, BW, c + 0.08);
+      face(b, L, BW, c + 0.46, 0.26, c + 0.24);
+      tail(b, L, BW, c + 0.44, 0.24);
       break;
     }
     case 'bus': {
-      const belt = c0 + 0.85;
-      b.frustum(0, c0, 0, W, L, W, L, belt - c0, 0, 0xffffff, 1);
-      b.frustum(0, belt, 0, W, L, W - 0.04, L - 0.1, 1.45, -0.02, 0xffffff, 2, { bottom: 2 });
-      b.frustum(0, belt + 1.45, -0.02, W - 0.04, L - 0.1, W - 0.14, L - 0.3, H - belt - 1.45, 0, PAL.cloud, 0);
-      for (let z = -L / 2 + 1.5; z < L / 2 - 1; z += 1.6) for (const s of [-1, 1]) b.box(s * (W / 2 - 0.02), belt + 0.72, z, 0.05, 1.4, 0.12, PAL.cloud, 0);
-      b.box(0, c0 + 0.15, L / 2, W, 0.3, 0.1, TRIM, 7);
-      b.box(0, c0 + 0.15, -L / 2, W, 0.3, 0.1, TRIM, 7);
-      b.box(0, belt + 1.62, L / 2 + 0.02, W * 0.7, 0.24, 0.04, PAL.ink, 0);
-      lights(b, L, W, c0 + 0.55, true, true, 0.3, 0.3);
+      const belt = c + 0.8;
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.04, 0.2, 0xffffff, 1);
+      b.soft(0, belt + 0.72, 0, BW - 0.02, 1.44, L - 0.1, 0.12, 0xffffff, 2);
+      b.soft(0, (belt + 1.44 + H) / 2, 0, BW - 0.06, H - belt - 1.44, L - 0.24, 0.16, PAL.cloud, 0);
+      for (let z = -L / 2 + 1.5; z < L / 2 - 1; z += 1.6) for (const s of [-1, 1]) b.soft(s * (BW / 2 - 0.01), belt + 0.72, z, 0.05, 1.4, 0.14, 0, PAL.cloud, 0);
+      b.soft(0, belt + 1.62, L / 2 + 0.01, BW * 0.7, 0.24, 0.04, 0, INK, 0);
+      bumpers(b, L, BW, c + 0.14);
+      face(b, L, BW, c + 0.52, 0.34, c + 0.26);
+      tail(b, L, BW, c + 0.5);
       break;
     }
     case 'sport': {
-      const belt = c0 + 0.5;
-      b.frustum(0, c0, 0, W, L, W - 0.12, L - 0.35, belt - c0, -0.05, 0xffffff, 1);
-      b.frustum(0, belt, -0.25, W - 0.3, L * 0.45, W - 0.62, L * 0.2, H - belt - 0.03, -0.25, 0xffffff, 2, { bottom: 2 });
-      b.frustum(0, H - 0.03, -0.5, W - 0.62, L * 0.2, W - 0.64, L * 0.18, 0.03, 0, 0xffffff, 1);
-      b.box(0, belt + 0.18, -L / 2 + 0.15, W - 0.2, 0.05, 0.3, PAL.ink, 7); // spoiler
-      for (const s of [-1, 1]) b.box(s * (W / 2 - 0.3), belt + 0.08, -L / 2 + 0.2, 0.06, 0.16, 0.06, PAL.ink, 7);
-      b.box(0, c0 + 0.1, L / 2 - 0.03, W - 0.05, 0.16, 0.08, PAL.ink, 7);
-      lights(b, L, W, belt - 0.08, true, true, 0.3, 0.42);
+      const belt = c + 0.46;
+      b.soft(0, (c + belt) / 2, 0, BW, belt - c, L - 0.08, 0.15, 0xffffff, 1);
+      b.soft(0, (belt + H) / 2, -0.3, BW - 0.34, H - belt + 0.02, L * 0.42, 0.12, 0xffffff, 2, { top: 0.78, topZ: 0.62, shift: -0.1, roofColor: 0xffffff, roofMat: 1 });
+      b.soft(0, belt + 0.2, -L / 2 + 0.18, BW - 0.2, 0.06, 0.32, 0.02, INK, 7); // spoiler
+      for (const s of [-1, 1]) b.soft(s * (BW / 2 - 0.32), belt + 0.08, -L / 2 + 0.22, 0.07, 0.18, 0.07, 0, INK, 7);
+      bumpers(b, L, BW, c + 0.08);
+      face(b, L, BW, belt - 0.12, 0.3, c + 0.16);
+      tail(b, L, BW, belt - 0.1);
       break;
     }
   }
   // liveries
   if (t.livery === 'police') {
-    const roofY = t.H + 0.02;
-    b.box(-0.32, roofY + 0.08, -L * 0.13, 0.62, 0.14, 0.26, PAL.coral, 5);
-    b.box(0.32, roofY + 0.08, -L * 0.13, 0.62, 0.14, 0.26, PAL.blue, 6);
-    for (const s of [-1, 1]) b.box(s * (W / 2 + 0.005), t.clear + 0.42, 0, 0.02, 0.2, L * 0.86, PAL.blue, 0);
-    b.box(0, t.clear + 0.62, L / 2 + 0.005, W * 0.5, 0.06, 0.02, PAL.blue, 0);
+    const roofY = t.H + 0.03;
+    b.soft(-0.3, roofY + 0.08, -L * 0.1, 0.58, 0.15, 0.28, 0.05, PAL.coral, 5);
+    b.soft(0.3, roofY + 0.08, -L * 0.1, 0.58, 0.15, 0.28, 0.05, PAL.blue, 6);
+    for (const s of [-1, 1]) b.soft(s * (BW / 2 + 0.005), c + 0.36, 0, 0.02, 0.18, L * 0.8, 0, PAL.blue, 0);
   } else if (t.livery === 'taxi') {
-    b.box(0, t.H + 0.12, -L * 0.13, 0.6, 0.2, 0.24, PAL.yellow, 3);
-    for (const s of [-1, 1]) for (let k = 0; k < 10; k++) b.box(s * (W / 2 + 0.005), t.clear + 0.45 + (k % 2) * 0.09, -L * 0.36 + k * L * 0.08, 0.02, 0.09, L * 0.08, k % 2 ? PAL.ink : PAL.white, 0);
+    b.soft(0, t.H + 0.12, -L * 0.1, 0.62, 0.2, 0.26, 0.05, PAL.yellow, 3);
+    for (const s of [-1, 1]) for (let k = 0; k < 10; k++) b.soft(s * (BW / 2 + 0.005), c + 0.4 + (k % 2) * 0.09, -L * 0.36 + k * L * 0.08, 0.02, 0.09, L * 0.08, 0, k % 2 ? INK : PAL.white, 0);
   }
   return b.build();
 }
@@ -208,15 +206,13 @@ export function vehicleGeometry(typeId) {
   return geoCache.get(typeId);
 }
 
+// unit wheel (radius 1, width 1 along x): chunky tyre, big hubcap with a white centre
 export function wheelGeometry() {
-  const tire = new THREE.CylinderGeometry(1, 1, 1, 12, 1);
-  tire.rotateZ(Math.PI / 2);
-  const hub = new THREE.CylinderGeometry(0.58, 0.58, 1.04, 8, 1);
-  hub.rotateZ(Math.PI / 2);
-  const parts = [[tire, PAL.ink], [hub, PAL.lilac]];
+  const parts = [[new THREE.CylinderGeometry(1, 1, 1, 10, 1), INK], [new THREE.CylinderGeometry(0.62, 0.62, 1.06, 8, 1), PAL.lilac], [new THREE.CylinderGeometry(0.26, 0.26, 1.1, 6, 1), PAL.white]];
   const pos = [], nrm = [], col = [], idx = [];
   const c = new THREE.Color();
   for (const [g, hex] of parts) {
+    g.rotateZ(Math.PI / 2);
     const base = pos.length / 3;
     c.set(hex);
     pos.push(...g.attributes.position.array);
@@ -250,7 +246,7 @@ export function makeVehicleMaterial() {
         float mt = floor(vMat + 0.5);
         if (mt == 1.0) diffuseColor.rgb *= mix(uPaint, uPaint * 0.2 + vec3(0.02, 0.012, 0.03), uDamage);
         if (mt == 2.0) diffuseColor.rgb = mix(vec3(0.16, 0.5, 0.82), vec3(0.03, 0.02, 0.05), uDamage);
-        if (mt == 3.0 || mt == 4.0) diffuseColor.rgb *= 0.75;`)
+        if (mt == 3.0 || mt == 4.0) diffuseColor.rgb *= 0.8;`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         if (mt == 3.0) totalEmissiveRadiance += vec3(1.0, 0.94, 0.7) * (0.06 + uHead * 2.0);
         if (mt == 4.0) totalEmissiveRadiance += vec3(1.0, 0.1, 0.05) * (0.08 + uHead * 0.6 + uBrake * 2.0) + vec3(1.0) * uRev * 1.2;

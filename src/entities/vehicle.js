@@ -1,6 +1,6 @@
 // Vehicle physics (arcade bicycle model), collisions, damage and the vehicle manager.
 import * as THREE from 'three';
-import { VTYPES, vehicleGeometry, wheelGeometry, makeVehicleMaterial } from './vehicleModels.js';
+import { VTYPES, vehicleGeometry, wheelGeometry, makeVehicleMaterial, TOY_WHEEL } from './vehicleModels.js';
 import { toon } from '../world/materials.js';
 import { cutePaint } from '../world/palette.js';
 import { clamp, choice, rand } from '../util/math.js';
@@ -350,13 +350,16 @@ export class VehicleManager {
       const T = v.type;
       e3.set(v.pitch, v.heading, v.roll, 'YXZ');
       q.setFromEuler(e3);
+      // drawn as big toy wheels: wider, pushed out to the body sides and raised so they still touch
+      // the road (physics wheel positions in v.wheels are unchanged)
+      const r = T.wheelR * TOY_WHEEL;
       for (const [lx, lz, front] of v.wheels) {
-        v3.set(lx, T.wheelR, lz).applyQuaternion(q);
+        v3.set(lx + Math.sign(lx) * 0.1, r, lz).applyQuaternion(q);
         v3.x += v.x; v3.y += v.y; v3.z += v.z;
         const steerA = front ? -v.steer * T.steer * 0.8 : 0;
         e3.set(v.wheelSpin, v.heading + steerA, 0, 'YXZ');
         qs.setFromEuler(e3);
-        m4.compose(v3, qs, s3.set(T.L > 6 ? 0.32 : 0.21, T.wheelR, T.wheelR));
+        m4.compose(v3, qs, s3.set(T.L > 6 ? 0.36 : 0.27, r, r));
         W.setMatrixAt(k++, m4);
       }
     }
